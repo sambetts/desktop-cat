@@ -1,0 +1,37 @@
+{
+  "name": "desktop-cat",
+  "version": "0.1.0",
+  "description": "A cat that lives on your desktop",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "icon": "node scripts/make-icon.js"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.18.0"
+  },
+  "optionalDependencies": {
+    "active-win": "^8.2.1"
+  },
+  "build": {
+    "appId": "com.example.desktopcat",
+    "productName": "Desktop Cat",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "assets/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
