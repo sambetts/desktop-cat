@@ -26,10 +26,31 @@ function applySettings(patch) {
 
 // One transparent window spanning every monitor, so the cat can walk between them.
 function virtualBounds() {
-  const ds = screen.getAllDisplays();
-  const x = Math.min(...ds.map((d) => d.bounds.x)), y = Math.min(...ds.map((d) => d.bounds.y));
-  const r = Math.max(...ds.map((d) => d.bounds.x + d.bounds.width)), b = Math.max(...ds.map((d) => d.bounds.y + d.bounds.height));
-  return { x, y, width: r - x, height: b - y };
+  const ds = screen.getAllDisplays().map((d) => process.platform === 'win32' ? screen.dipToScreenRect(null, d.bounds) : d.bounds);
+  const x = Math.min(...ds.map((d) => d.x)), y = Math.min(...ds.map((d) => d.y));
+  const r = Math.max(...ds.map((d) => d.x + d.width)), b = Math.max(...ds.map((d) => d.y + d.height));
+  const bounds = { x, y, width: r - x, height: b - y };
+  return process.platform === 'win32' ? screen.screenToDipRect(win || null, bounds) : bounds;
+}
+
+function overlayCoordinates() {
+  const b = win.getContentBounds(), windows = process.platform === 'win32';
+  const physical = windows ? screen.dipToScreenRect(win, b) : b;
+  const zoom = win.webContents.getZoomFactor();
+  const sx = physical.width / b.width * zoom, sy = physical.height / b.height * zoom;
+  // Display DIPs have different scales; the spanning overlay has only one.
+  const nativeRect = (r) => ({
+    x: (r.x - physical.x) / sx, y: (r.y - physical.y) / sy,
+    width: r.width / sx, height: r.height / sy,
+  });
+  return {
+    width: Math.round(b.width / zoom), height: Math.round(b.height / zoom), nativeRect,
+    rect: (r) => nativeRect(windows ? screen.dipToScreenRect(null, r) : r),
+    point: (p) => {
+      const q = windows ? screen.dipToScreenPoint(p) : p;
+      return { x: (q.x - physical.x) / sx, y: (q.y - physical.y) / sy };
+    },
+  };
 }
 
 function createWindow() {
@@ -58,8 +79,8 @@ function openSettings() {
 
 function summonCat() {
   const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const b = win.getBounds();
-  win.webContents.send('summon', { x: workArea.x + workArea.width / 2 - b.x, y: workArea.y + workArea.height - b.y });
+  const area = overlayCoordinates().rect(workArea);
+  win.webContents.send('summon', { x: area.x + area.width / 2, y: Math.floor(area.y + area.height) });
 }
 
 function buildMenu() {
@@ -108,10 +129,7 @@ app.whenReady().then(() => {
     polling = true;
     try {
       const w = await getActiveWindow();
-      // active-win returns physical pixels; Electron's screen geometry uses DIPs.
-      active = w && w.owner && w.owner.processId !== process.pid ? {
-        ...(process.platform === 'win32' ? screen.screenToDipRect(null, w.bounds) : w.bounds), title: w.title, app: w.owner.name,
-      } : null;
+      active = w && w.owner && w.owner.processId !== process.pid ? { ...w.bounds, title: w.title, app: w.owner.name } : null;
     } catch { active = null; }
     polling = false;
   }, 700);
@@ -120,21 +138,21 @@ app.whenReady().then(() => {
   function sendEnvironment() {
     if (win.isDestroyed()) return;
     const p = screen.getCursorScreenPoint();
-    const b = win.getBounds();
+    const space = overlayCoordinates();
     const idle = powerMonitor.getSystemIdleTime(); // seconds since last keyboard/mouse input
     // Input happened but the cursor stayed put: the user is typing.
     const still = prevCursor && prevCursor.x === p.x && prevCursor.y === p.y;
     if (idle < prevIdle && still) lastTyping = Date.now();
     prevIdle = idle; prevCursor = p;
     const primary = screen.getPrimaryDisplay().id;
-    const floors = screen.getAllDisplays().map((d) => ({
-      id: d.id, primary: d.id === primary, top: d.workArea.y - b.y,
-      x0: d.workArea.x - b.x, x1: d.workArea.x + d.workArea.width - b.x, y: d.workArea.y + d.workArea.height - b.y,
-    }));
+    const floors = screen.getAllDisplays().map((d) => {
+      const a = space.rect(d.workArea);
+      return { id: d.id, primary: d.id === primary, top: a.y, x0: a.x, x1: a.x + a.width, y: Math.floor(a.y + a.height) };
+    });
     win.webContents.send('env', {
-      cursor: { x: p.x - b.x, y: p.y - b.y }, idle, typing: Date.now() - lastTyping < 1500, hour: new Date().getHours(),
-      width: b.width, height: b.height, floors,
-      active: active ? { x: active.x - b.x, y: active.y - b.y, width: active.width, height: active.height, title: active.title, app: active.app } : null,
+      cursor: space.point(p), idle, typing: Date.now() - lastTyping < 1500, hour: new Date().getHours(),
+      width: space.width, height: space.height, floors,
+      active: active ? { ...space.nativeRect(active), title: active.title, app: active.app } : null,
     });
   }
   setInterval(sendEnvironment, 50);

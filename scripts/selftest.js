@@ -4,22 +4,65 @@ const { app, BrowserWindow, Tray, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const multiMonitor = process.argv.includes('--multi-monitor');
-let simulatedDisplays, simulatedCursor, trayMenu;
+const mixedDpi = multiMonitor && process.platform === 'win32';
+let simulatedDisplays, simulatedCursor, trayMenu, simulatedActiveBounds;
+if (mixedDpi) {
+  try {
+    const activeWin = require.resolve('active-win');
+    require(activeWin);
+    simulatedActiveBounds = { x: 200, y: 300, width: 900, height: 600 };
+    require.cache[activeWin].exports = async () => ({ bounds: simulatedActiveBounds, owner: { processId: process.pid + 1, name: 'Selftest' }, title: 'Selftest' });
+  } catch {}
+}
 if (multiMonitor) {
   app.whenReady().then(() => {
-    const display = (id, x, y, width, height, scaleFactor) => ({
-      id, bounds: { x, y, width, height }, workArea: { x, y, width, height: height - 48 }, scaleFactor,
+    const rect = ([x, y, width, height]) => ({ x, y, width, height });
+    const display = (id, bounds, scaleFactor, physical = bounds, inset = 0) => ({
+      id, bounds: rect(bounds), workArea: { ...rect(bounds), height: bounds[3] - inset }, scaleFactor, physical: rect(physical),
     });
-    simulatedDisplays = [
-      display(4, 450, -450, 800, 450, 1.5), display(2, -450, 0, 450, 800, 1),
-      display(1, 0, 0, 1600, 900, 1.25), display(3, 1600, 0, 450, 800, 1),
+    simulatedDisplays = mixedDpi ? [
+      display(4, [711, -1080, 1920, 1080], 1, [1067, -1080, 1920, 1080]),
+      display(2, [-1080, 0, 1080, 1920], 1),
+      display(1, [0, 0, 2560, 1440], 1.5, [0, 0, 3840, 2160], 48),
+      display(3, [2560, 0, 1080, 1920], 1, [3840, 0, 1080, 1920]),
+    ] : [
+      display(4, [450, -450, 800, 450], 1, undefined, 48), display(2, [-450, 0, 450, 800], 1, undefined, 48),
+      display(1, [0, 0, 1600, 900], 1, undefined, 48), display(3, [1600, 0, 450, 800], 1, undefined, 48),
     ];
-    simulatedCursor = { x: 800, y: 400 };
+    simulatedCursor = mixedDpi ? { x: 1280, y: 696 } : { x: 800, y: 400 };
     screen.getAllDisplays = () => simulatedDisplays;
     screen.getPrimaryDisplay = () => simulatedDisplays.find((d) => d.id === 1);
     screen.getCursorScreenPoint = () => simulatedCursor;
     screen.getDisplayNearestPoint = (p) => simulatedDisplays.find(({ bounds: b }) =>
       p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height) || screen.getPrimaryDisplay();
+    if (mixedDpi) {
+      const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) *
+        Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+      const matching = (r, physical) => simulatedDisplays.reduce((a, b) => overlap(r, b[physical ? 'physical' : 'bounds']) > overlap(r, a[physical ? 'physical' : 'bounds']) ? b : a);
+      screen.dipToScreenRect = (window, r) => {
+        const d = window ? screen.getPrimaryDisplay() : matching(r, false);
+        return {
+          x: Math.round(d.physical.x + (r.x - d.bounds.x) * d.scaleFactor),
+          y: Math.round(d.physical.y + (r.y - d.bounds.y) * d.scaleFactor),
+          width: Math.round(r.width * d.scaleFactor), height: Math.round(r.height * d.scaleFactor),
+        };
+      };
+      screen.screenToDipRect = (window, r) => {
+        const d = window ? screen.getPrimaryDisplay() : matching(r, true);
+        return {
+          x: Math.round(d.bounds.x + (r.x - d.physical.x) / d.scaleFactor),
+          y: Math.round(d.bounds.y + (r.y - d.physical.y) / d.scaleFactor),
+          width: Math.round(r.width / d.scaleFactor), height: Math.round(r.height / d.scaleFactor),
+        };
+      };
+      screen.dipToScreenPoint = (p) => {
+        const d = screen.getDisplayNearestPoint(p);
+        return {
+          x: Math.round(d.physical.x + (p.x - d.bounds.x) * d.scaleFactor),
+          y: Math.round(d.physical.y + (p.y - d.bounds.y) * d.scaleFactor),
+        };
+      };
+    }
     const setContextMenu = Tray.prototype.setContextMenu;
     Tray.prototype.setContextMenu = function (menu) { trayMenu = menu; return setContextMenu.call(this, menu); };
   });
@@ -158,7 +201,8 @@ function checkDisplayGeometry() {
     }
     Object.assign(cat, { x: 2300, y: 300, state: 'sit', stateTime: 0, dur: 20, vx: 0, vy: 0 });
     update(0);
-    if (cat.x !== 1250 || cat.y !== 1302) throw new Error('Cat lost in a monitor-layout gap must return to a visible display');
+    if (cat.x !== 2300 || !floors.some((f) => cat.x - pixelCat.padding >= f.x0 && cat.x + pixelCat.padding <= f.x1 &&
+      cat.y - pixelCat.height >= f.top && cat.y <= f.y)) throw new Error('Cat lost in a gap must move fully onto the nearest display');
     receiveEnvironment({ ...env, width: 1000, height: 748, floors: [{ id: 3, primary: true, x0: 0, x1: 1000, top: 0, y: 700 }] });
     if (cat.x !== 500 || cat.y !== 700 || cat.air || cat.onWindow) throw new Error('Cat must recover after disconnecting or rearranging displays');
     return true;
@@ -168,8 +212,112 @@ function checkDisplayGeometry() {
   }
 }
 
+function checkMonitorCrossings(projection) {
+  const saved = { cat: { ...cat }, env, settings, toys };
+  const floors = projection ? env.floors : [
+    { id: 4, x0: 900, x1: 1700, top: 0, y: 402 },
+    { id: 2, x0: 0, x1: 450, top: 450, y: 1002 },
+    { id: 1, primary: true, x0: 450, x1: 2050, top: 450, y: 1302 },
+    { id: 3, x0: 2050, x1: 2500, top: 450, y: 1002 },
+  ];
+  const image = document.createElement('canvas');
+  image.width = 216; image.height = 162;
+  const pixels = image.getContext('2d', { willReadFrequently: true });
+  const areas = projection ? projection.areas : floors.map((f) => ({ x: f.x0, y: f.top, width: f.x1 - f.x0, height: f.y - f.top }));
+  const scale = projection ? projection.scale : 1, origin = projection ? projection.origin : { x: 0, y: 0 };
+  const primary = floors.find((f) => f.primary), snapshots = [];
+  let frames = 0, checkedPixels = 0;
+  const visible = (label) => {
+    pixels.clearRect(0, 0, image.width, image.height);
+    pixelCat.draw(pixels, { ...cat, x: 108, y: 150 });
+    const data = pixels.getImageData(0, 0, image.width, image.height).data;
+    for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+      if (!data[(y * image.width + x) * 4 + 3]) continue;
+      const gx = Math.round(cat.x) + x - 108, gy = Math.round(cat.y) + y - 150;
+      for (let py = Math.floor(origin.y + gy * scale); py < Math.ceil(origin.y + (gy + 1) * scale); py++) {
+        for (let px = Math.floor(origin.x + gx * scale); px < Math.ceil(origin.x + (gx + 1) * scale); px++) {
+          if (!areas.some((a) => px >= a.x && px < a.x + a.width && py >= a.y && py < a.y + a.height)) {
+            throw new Error(`${label}: cat pixel (${px}, ${py}) is outside every physical work area at position (${cat.x}, ${cat.y})`);
+          }
+          checkedPixels++;
+        }
+      }
+    }
+    frames++;
+  };
+  const pose = (x, y, dir, extra = {}) => Object.assign(cat, {
+    x, y, dir, vx: 0, vy: 0, state: 'walk', stateTime: 0, dur: 20,
+    air: false, onWindow: false, ignoreWin: false, swat: 0, ...extra,
+  });
+  try {
+    env = { ...env, floors, width: projection ? env.width : 2500, height: projection ? env.height : 1350, active: null };
+    settings = { ...settings, interest: 4 }; toys = [];
+    for (const [id, outward] of [[2, -1], [3, 1]]) {
+      const side = floors.find((f) => f.id === id), boundary = outward < 0 ? primary.x0 : primary.x1;
+      for (const returning of [false, true]) {
+        const dir = returning ? -outward : outward, distance = pixelCat.padding + 20;
+        const start = boundary - dir * distance, end = boundary + dir * distance;
+        const label = `${returning ? 'Returning from' : 'Entering'} monitor ${id}`;
+        pose(start, returning ? side.y : primary.y, dir);
+        let captured = false;
+        for (let step = 0; (cat.x - end) * dir < 0; step++) {
+          if (step > 100) throw new Error(`Cat failed to cross monitor ${id}`);
+          const previousX = cat.x;
+          update(0.025);
+          if ((cat.x - previousX) * dir <= 0 || Math.abs(cat.x - previousX) > 6) throw new Error('Crossing must not teleport the cat home');
+          visible(label);
+          if (!captured && Math.abs(cat.x - boundary) < 4) {
+            snapshots.push({ label: `${label}: boundary`, boundary, cat: { ...cat } }); captured = true;
+          }
+        }
+        for (let step = 0; step < 20; step++) { update(0.025); visible(label); }
+        snapshots.push({ label: `${label}: clear`, boundary, cat: { ...cat } });
+      }
+      for (const [label, y, expectedY, valid] of [
+        ['Below floor', (side.y + primary.y) / 2, side.y, false],
+        ['Valid perch', side.y - 152, side.y - 152, true],
+        ['Head in gap', side.top + pixelCat.height / 2, Math.ceil(side.top) + pixelCat.height, false],
+      ]) {
+        const x = boundary + outward * (pixelCat.padding + 20);
+        env.active = { x: 0, y, width: env.width, height: 300 };
+        pose(x, y, outward, { state: 'sit', onWindow: true });
+        update(0);
+        if (cat.x !== x || cat.y !== expectedY || cat.onWindow !== valid) {
+          throw new Error(`Monitor ${id}, ${label}: window perching must keep the entire cat on screen`);
+        }
+        visible(`${label} on monitor ${id}`);
+        env.active = null;
+      }
+      const x = boundary + outward * (pixelCat.padding + 20), y = side.y - 152;
+      env.active = { x: x - 120, y, width: 240, height: 300 };
+      pose(x + 109, y, 1, { state: 'helpType', onWindow: true });
+      const previousX = cat.x;
+      for (let step = 0; step < 3; step++) { update(1 / 60); visible(`Pacing on monitor ${id}`); }
+      if (cat.x >= previousX || cat.dir !== -1 || !cat.onWindow) throw new Error('Pacing must turn before walking off the window');
+      env.active = null;
+    }
+    const atlas = document.createElement('canvas'), width = 560, height = Math.max(300, primary.y - Math.min(...floors.filter((f) => f.id === 2 || f.id === 3).map((f) => f.y)) + pixelCat.height + 72);
+    atlas.width = width * 2; atlas.height = height * Math.ceil(snapshots.length / 2);
+    const sheet = atlas.getContext('2d');
+    for (const [i, snapshot] of snapshots.entries()) {
+      const x = i % 2 * width, y = Math.floor(i / 2) * height, ox = snapshot.boundary - width / 2, oy = primary.y - height + 24;
+      sheet.save(); sheet.beginPath(); sheet.rect(x, y, width, height); sheet.clip();
+      sheet.fillStyle = '#542b38'; sheet.fillRect(x, y, width, height);
+      for (const f of floors) {
+        sheet.fillStyle = f.primary ? '#dde9f1' : '#f5eee1'; sheet.fillRect(x + f.x0 - ox, y + f.top - oy, f.x1 - f.x0, f.y - f.top);
+      }
+      pixelCat.draw(sheet, { ...snapshot.cat, x: x + snapshot.cat.x - ox, y: y + snapshot.cat.y - oy });
+      sheet.fillStyle = '#202735'; sheet.fillRect(x, y, width, 28);
+      sheet.fillStyle = '#ffffff'; sheet.font = '14px sans-serif'; sheet.fillText(snapshot.label, x + 12, y + 19);
+      sheet.restore();
+    }
+    return { frames, checkedPixels, png: atlas.toDataURL('image/png').split(',')[1] };
+  } finally { Object.assign(cat, saved.cat); env = saved.env; settings = saved.settings; toys = saved.toys; }
+}
+
 app.whenReady().then(async () => {
-  const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 20000);
+  let stage = 'overlay startup';
+  const timeout = setTimeout(() => { console.error(`Smoke test timed out during ${stage}`); app.exit(1); }, 20000);
   try {
     const overlay = BrowserWindow.getAllWindows().find((x) => x.isAlwaysOnTop());
     assert.ok(overlay, 'Desktop overlay must exist');
@@ -190,10 +338,18 @@ app.whenReady().then(async () => {
     assert.equal(initial.x, (initial.home.x0 + initial.home.x1) / 2, 'Cat must start on the primary monitor');
     assert.equal(initial.y, initial.home.y);
     if (multiMonitor) {
-      assert.deepEqual(overlay.getBounds(), { x: -450, y: -450, width: 2500, height: 1350 }, 'Overlay must not be capped to a single screen');
-      assert.equal(initial.width, 2500);
-      assert.equal(initial.height, 1350);
+      const bounds = mixedDpi ? { x: -720, y: -720, width: 4000, height: 2160 } : { x: -450, y: -450, width: 2500, height: 1350 };
+      assert.deepEqual(overlay.getBounds(), bounds, 'Overlay must cover the physical desktop without single-screen capping');
+      assert.equal(initial.width, bounds.width);
+      assert.equal(initial.height, bounds.height);
+      if (mixedDpi) {
+        const geometry = await overlay.webContents.executeJavaScript('({ floors: env.floors, cursor: env.cursor })');
+        assert.deepEqual(geometry.floors.find((f) => f.id === 2), { id: 2, primary: false, top: 720, x0: 0, x1: 720, y: 2000 }, '100% side screen must use the 150% overlay coordinate space');
+        assert.deepEqual(geometry.floors.find((f) => f.id === 3), { id: 3, primary: false, top: 720, x0: 3280, x1: 4000, y: 2000 });
+        assert.deepEqual(geometry.cursor, { x: 2000, y: 1416 }, 'Cursor must take the same physical-coordinate path as displays');
+      }
     }
+    stage = 'sprite checks';
     overlay.webContents.debugger.attach('1.3');
     await overlay.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     const sprites = await overlay.webContents.executeJavaScript(`(${checkSprites.toString()})()`);
@@ -207,10 +363,32 @@ app.whenReady().then(async () => {
     })()`), true, 'Reduced motion must freeze decorative sprite animation');
     await overlay.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
     overlay.webContents.debugger.detach();
+    stage = 'behaviour checks';
     assert.equal(await overlay.webContents.executeJavaScript(`(${checkSilence.toString()})()`), 0);
     assert.equal(await overlay.webContents.executeJavaScript(`(${checkEdges.toString()})()`), true);
     assert.equal(await overlay.webContents.executeJavaScript(`(${checkDisplayGeometry.toString()})()`), true);
+    stage = 'side-screen replay';
+    const crossing = await overlay.webContents.executeJavaScript(`(() => {
+      try { return (${checkMonitorCrossings.toString()})(); } catch (error) { return { error: error.message }; }
+    })()`);
+    assert.equal(crossing.error, undefined, crossing.error);
+    let physicalCrossing;
+    if (mixedDpi) {
+      stage = 'mixed-DPI replay';
+      const projection = {
+        origin: { x: -1080, y: -1080 }, scale: 1.5,
+        areas: simulatedDisplays.map((d) => ({
+          ...d.physical, height: d.physical.height - (d.bounds.height - d.workArea.height) * d.scaleFactor,
+        })),
+      };
+      physicalCrossing = await overlay.webContents.executeJavaScript(`(() => {
+        try { return (${checkMonitorCrossings.toString()})(${JSON.stringify(projection)}); } catch (error) { return { error: error.message }; }
+      })()`);
+      assert.equal(physicalCrossing.error, undefined, physicalCrossing.error);
+      assert.ok(physicalCrossing.frames > 200 && physicalCrossing.checkedPixels > 1000000, 'Mixed-DPI replay must inspect every opaque pixel through all four crossings');
+    }
 
+    stage = 'settings and toy IPC';
     const settingsWindow = new BrowserWindow({
       show: false, webPreferences: { preload: path.join(__dirname, '..', 'preload.js') },
     });
@@ -225,29 +403,56 @@ app.whenReady().then(async () => {
     assert.ok(state.drawn > 1000, 'Overlay must draw the cat');
     assert.ok(state.toys.includes('yarn') && state.toys.includes('food'), 'Toy IPC must still work');
     assert.equal(overlay.webContents.isCurrentlyAudible(), false);
+    if (simulatedActiveBounds) {
+      const active = await overlay.webContents.executeJavaScript('env.active');
+      for (const [key, expected] of Object.entries({ x: 1280 / 1.5, y: 920, width: 600, height: 400 })) {
+        assert.ok(Math.abs(active[key] - expected) < 0.000001, `Native active-window ${key} must map directly into the overlay`);
+      }
+    }
+    stage = 'overlay capture';
     const output = process.env.CAT_TEST_OUTPUT_DIR || app.getPath('temp');
     fs.mkdirSync(output, { recursive: true });
     fs.writeFileSync(path.join(output, 'cat-sprites.png'), Buffer.from(sprites.png, 'base64'));
     fs.writeFileSync(path.join(output, 'cat-shot.png'), (await overlay.webContents.capturePage()).toPNG());
+    fs.writeFileSync(path.join(output, 'cat-crossings.png'), Buffer.from((physicalCrossing || crossing).png, 'base64'));
     if (multiMonitor) {
+      stage = 'summoning and display changes';
       const summon = trayMenu.items.find((item) => item.label === 'Bring cat here');
       assert.ok(summon, 'Tray must provide a way to find the cat');
-      for (const id of [4, 2, 1]) {
-        const { workArea: a } = simulatedDisplays.find((d) => d.id === id);
+      for (const id of [4, 2, 3, 1]) {
+        const d = simulatedDisplays.find((d) => d.id === id), a = d.workArea;
         simulatedCursor = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
         summon.click();
-        const position = await overlay.webContents.executeJavaScript('new Promise(resolve => setTimeout(() => resolve({ x: cat.x, y: cat.y }), 120))');
+        const actual = await overlay.webContents.executeJavaScript('new Promise(resolve => setTimeout(() => resolve({ x: cat.x, y: cat.y, cursor: env.cursor }), 120))');
         const b = overlay.getBounds();
-        assert.deepEqual(position, { x: a.x + a.width / 2 - b.x, y: a.y + a.height - b.y }, `Summon must target display ${id}`);
+        const expected = mixedDpi ? {
+          x: (d.physical.x + d.physical.width / 2 + 1080) / 1.5,
+          y: Math.floor((d.physical.y + a.height * d.scaleFactor + 1080) / 1.5),
+        } : { x: a.x + a.width / 2 - b.x, y: a.y + a.height - b.y };
+        assert.ok(Math.abs(actual.x - expected.x) < 0.000001 && actual.y === expected.y, `Summon must target display ${id}`);
+        const cursorY = mixedDpi ? (d.physical.y + a.height / 2 * d.scaleFactor + 1080) / 1.5 : simulatedCursor.y - b.y;
+        assert.ok(Math.abs(actual.cursor.x - expected.x) < 0.000001 && Math.abs(actual.cursor.y - cursorY) < 0.000001, `Cursor must align with the cat on display ${id}`);
+      }
+      if (mixedDpi) {
+        const right = simulatedDisplays.find((d) => d.id === 3);
+        right.scaleFactor = 2; right.physical = { x: 3840, y: 0, width: 2160, height: 3840 };
+        screen.emit('display-metrics-changed', {}, right, ['scaleFactor']);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        assert.deepEqual(overlay.getBounds(), { x: -720, y: -720, width: 4720, height: 3280 }, 'A higher-DPI secondary screen must not be cropped by a DIP-only desktop union');
+        simulatedCursor = { x: 3100, y: 960 }; summon.click();
+        const position = await overlay.webContents.executeJavaScript('new Promise(resolve => setTimeout(() => resolve({ x: cat.x, y: cat.y }), 120))');
+        assert.deepEqual(position, { x: 4000, y: 3280 }, 'Summon must reach the bottom of a higher-DPI secondary screen');
       }
       const removed = simulatedDisplays.find((d) => d.id === 2);
       simulatedDisplays = simulatedDisplays.filter((d) => d.id === 1);
       screen.emit('display-removed', {}, removed);
       const position = await overlay.webContents.executeJavaScript('new Promise(resolve => setTimeout(() => resolve({ x: cat.x, y: cat.y }), 120))');
-      assert.deepEqual(overlay.getBounds(), { x: 0, y: 0, width: 1600, height: 900 });
-      assert.deepEqual(position, { x: 800, y: 852 }, 'Cat must stay visible after monitor removal changes the desktop origin');
-      console.log('PASS: four-screen overlay bounds, primary spawn, tray summoning to upper/left/primary screens, monitor removal');
+      assert.deepEqual(overlay.getBounds(), mixedDpi ? { x: 0, y: 0, width: 2560, height: 1440 } : { x: 0, y: 0, width: 1600, height: 900 });
+      assert.deepEqual(position, mixedDpi ? { x: 1280, y: 1392 } : { x: 800, y: 852 }, 'Cat must stay visible after monitor removal changes the desktop origin');
+      console.log('PASS: four-screen physical overlay bounds, primary spawn, cursor and tray summoning on all screens, DPI changes, monitor removal');
     }
+    console.log(`PASS: ${crossing.frames} fully visible side-screen crossing/perching frames`);
+    if (physicalCrossing) console.log(`PASS: ${physicalCrossing.frames} measured mixed-DPI crossing/perching frames, ${physicalCrossing.checkedPixels} physical pixels checked`);
     console.log(`PASS: ${sprites.poses} crisp animated poses, mirroring, reduced motion, desktop edges, display geometry, silent behaviours, settings, toy IPC`);
     console.log('state', JSON.stringify(state));
     console.log('captures', output);

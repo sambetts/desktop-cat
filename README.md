@@ -6,7 +6,7 @@ A pixel-art tabby that lives on your desktop (Electron, cross-platform). Require
     npm start          # tray icon: bring cat here, interest level, toys, settings
     npm run dist       # package with electron-builder (fetched on demand)
     npx electron scripts/selftest.js   # smoke test (use xvfb-run --no-sandbox on headless Linux)
-    npx electron scripts/selftest.js --multi-monitor   # simulated four-screen regression test
+    npx electron scripts/selftest.js --multi-monitor   # simulated mixed-DPI four-screen regression test
 
 ## Installing behind a restricted npm registry
 - The default install only needs `electron` and the optional `active-win`. `electron-builder` is not installed by `npm ci`; `npm run dist` downloads it with `npx`, so run packaging where the public npm registry is reachable.
@@ -20,7 +20,7 @@ A pixel-art tabby that lives on your desktop (Electron, cross-platform). Require
 - Checks on you: walks to the cursor, notices typing (input with a still cursor), jumps onto the top of your active window (needs `active-win`; optional), paces across it while you type (level 4), and knocks a cup off the window edge (level 3+).
 - Toys from the tray: yarn ball, laser pointer (follows your cursor), food bowl.
 - Animated pixel-art poses with blinking, a swishing striped tail, and cream paws. Silent for now; no meows or purrs.
-- Starts on the primary monitor. Supports stacked and offset monitors, and returns to the primary screen after display-layout changes.
+- Starts on the primary monitor. Supports stacked, offset and mixed-DPI monitors, keeps the full sprite above shorter-screen edges, and returns to the primary screen after display-layout changes.
 - Lost the cat? Right-click the tray icon and choose **Bring cat here** to summon it onto that screen.
 
 ## Known limits

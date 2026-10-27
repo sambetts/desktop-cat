@@ -25,16 +25,52 @@ const isNight = () => settings.nightSleep && (env.hour >= 23 || env.hour < 7);
 // ---- world ----
 const cat = { x: 300, y: 0, vx: 0, vy: 0, dir: 1, state: 'sit', t: 0, stateTime: 0, dur: 3, onWindow: false, air: false, swat: 0 };
 let toys = []; // yarn, bowl, cup, laser
-const floorAt = (x, y = cat.y) => {
+const surfaceAt = (x, y = cat.y) => {
   const spanning = env.floors.filter((f) => x >= f.x0 && x < f.x1);
   const containing = spanning.find((f) => y > (f.top ?? 0) && y <= f.y);
-  if (containing) return containing.y;
+  if (containing) return containing;
   const distance = (f) => Math.hypot(Math.max(f.x0 - x, 0, x - f.x1), Math.max((f.top ?? 0) - y, 0, y - f.y));
-  return (spanning.length ? spanning : env.floors).reduce((a, b) => distance(a) <= distance(b) ? a : b).y;
+  return (spanning.length ? spanning : env.floors).reduce((a, b) => distance(a) <= distance(b) ? a : b);
+};
+const floorAt = (x, y = cat.y) => surfaceAt(x, y).y;
+const catFloorAt = (x = cat.x, y = cat.y) => {
+  const surface = surfaceAt(x, y);
+  // Keep the entire sprite above the higher floor while straddling screens.
+  return env.floors.filter((f) => x + pixelCat.padding > f.x0 && x - pixelCat.padding < f.x1 &&
+    (f.top ?? 0) < surface.y && f.y > (surface.top ?? 0)).reduce((floor, f) => Math.min(floor, f.y), surface.y);
 };
 const winTop = () => (env.active && env.active.y > 50 && env.active.width > 200 ? env.active : null);
-const onWinRange = (x) => { const w = winTop(); return w && x > w.x + 10 && x < w.x + w.width - 10; };
+const onWinRange = (x) => {
+  const w = winTop();
+  return w && x > w.x + 10 && x < w.x + w.width - 10 &&
+    w.y > (surfaceAt(x, w.y).top ?? 0) && w.y <= catFloorAt(x, w.y);
+};
 cat.y = floorAt(cat.x);
+
+function keepCatVisible() {
+  const left = Math.round(cat.x) - pixelCat.padding, right = Math.round(cat.x) + pixelCat.padding;
+  const top = Math.round(cat.y) - pixelCat.height, bottom = Math.round(cat.y);
+  const edges = [left, right, ...env.floors.flatMap((f) => [f.x0, f.x1]).filter((x) => x > left && x < right)].sort((a, b) => a - b);
+  const fits = edges.slice(1).every((edge, i) => {
+    const x = (edges[i] + edge) / 2;
+    let covered = top;
+    for (const f of env.floors.filter((f) => x >= f.x0 && x < f.x1).sort((a, b) => (a.top ?? 0) - (b.top ?? 0))) {
+      if ((f.top ?? 0) > covered) break;
+      covered = Math.max(covered, f.y);
+    }
+    return covered >= bottom;
+  });
+  if (fits) return;
+  const positions = env.floors.filter((f) => f.x1 - f.x0 >= pixelCat.padding * 2 && f.y - (f.top ?? 0) >= pixelCat.height).map((f) => ({
+    x: Math.max(Math.ceil(f.x0) + pixelCat.padding, Math.min(Math.floor(f.x1) - pixelCat.padding, cat.x)),
+    y: Math.max(Math.ceil(f.top ?? 0) + pixelCat.height, Math.min(f.y, cat.y)),
+  }));
+  const nearest = positions.sort((a, b) => Math.hypot(a.x - cat.x, a.y - cat.y) - Math.hypot(b.x - cat.x, b.y - cat.y))[0];
+  if (!nearest) return;
+  if (nearest.x !== cat.x && cat.state === 'walk') cat.dir *= -1;
+  if (nearest.y !== cat.y) { cat.vy = 0; cat.air = false; }
+  cat.x = nearest.x; cat.y = nearest.y; cat.onWindow = false;
+}
 
 function setState(s, dur) { cat.state = s; cat.stateTime = 0; cat.dur = dur ?? rand(2, 5); }
 function jump(vy, vx = 0) { cat.vy = vy; cat.vx = vx; cat.air = true; cat.onWindow = false; setState('jump', 3); }
@@ -131,15 +167,15 @@ function update(dt) {
       if (cat.onWindow) { setState('sit', 3); break; }
       if (!onWinRange(cat.x)) moveToward(Math.max(w.x + 40, Math.min(w.x + w.width - 40, cat.x)), 5);
       else {
-        const h = floorAt(cat.x) - w.y;
+        const h = catFloorAt() - w.y;
         if (h > 0 && h < 650) { cat.vx = 0; jump(-Math.sqrt(2 * G * (h + 50))); }
         else setState('sit', 2);
       }
       break;
     case 'hopDown': cat.onWindow = false; cat.ignoreWin = true; cat.vx = cat.dir * 60; break;
     case 'helpType': // paces across the window the user is typing in
-      cat.vx = cat.dir * speed() * 0.5;
       if (!onWinRange(cat.x + cat.dir * 20)) cat.dir *= -1;
+      cat.vx = cat.dir * speed() * 0.5;
       break;
     case 'toBowl': {
       const b = toyOf('food');
@@ -175,7 +211,7 @@ function update(dt) {
   cat.vy += G * dt;
   cat.y += cat.vy * dt;
   cat.x = Math.max(pixelCat.padding, Math.min(env.width - pixelCat.padding, cat.x + cat.vx * dt));
-  const fl = floorAt(cat.x);
+  const fl = catFloorAt(cat.x, prevY);
   if (w && !cat.ignoreWin && cat.vy >= 0 && onWinRange(cat.x) && prevY <= w.y + 6 && cat.y >= w.y) {
     cat.y = w.y; cat.vy = 0; cat.onWindow = true; cat.air = false;
     if (cat.state === 'jump') setState('sit', 3);
@@ -187,8 +223,7 @@ function update(dt) {
     cat.y = fl; cat.vy = 0; cat.air = false; cat.ignoreWin = false;
     if (cat.state === 'jump') setState('sit', 2);
   }
-  if (!env.floors.some((f) => cat.x + pixelCat.padding > f.x0 && cat.x - pixelCat.padding < f.x1 &&
-    cat.y > (f.top ?? 0) && cat.y - pixelCat.height < f.y)) placeCat();
+  keepCatVisible();
 
   cat.swat = Math.max(0, cat.swat - dt);
   updateToys(dt);
