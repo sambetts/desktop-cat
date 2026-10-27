@@ -2,6 +2,8 @@
 
 A pixel-art tabby that lives on your desktop (Electron, cross-platform). Requires Node.js 22.12+.
 
+![Desktop Cat, an orange pixel-art tabby sitting with its striped tail curled upward.](assets/cat-screenshot.png)
+
     npm ci
     npm start          # tray icon: bring cat here, interest level, toys, settings
     npm run dist       # package with electron-builder (fetched on demand)
