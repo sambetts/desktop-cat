@@ -13,5 +13,5 @@ app.whenReady().then(() => {
     console.log('captured', img.getSize());
     app.exit(0);
   }, 6000);
-  BrowserWindow.getAllWindows().forEach((x) => x.webContents.on('console-message', (_, l, m) => console.log('console:', m)));
+  BrowserWindow.getAllWindows().forEach((x) => x.webContents.on('console-message', (e) => console.log('console:', e.message)));
 });
