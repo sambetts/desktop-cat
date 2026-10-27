@@ -6,7 +6,7 @@ let getActiveWindow = null;
 try { getActiveWindow = require('active-win'); } catch { /* optional: perching disabled */ }
 
 const LEVELS = ['Ignore everything', 'Aloof', 'Curious', 'Playful', 'Play with everything'];
-const DEFAULTS = { interest: 2, sound: true, nightSleep: true, launchAtLogin: false };
+const DEFAULTS = { interest: 2, nightSleep: true, launchAtLogin: false };
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 let settings = { ...DEFAULTS };
 let win, tray, settingsWin;
@@ -33,11 +33,14 @@ function virtualBounds() {
 }
 
 function createWindow() {
+  const bounds = virtualBounds();
   win = new BrowserWindow({
-    ...virtualBounds(), transparent: true, frame: false, hasShadow: false, resizable: false,
+    ...bounds, transparent: true, frame: false, hasShadow: false, resizable: false,
     alwaysOnTop: true, skipTaskbar: true, focusable: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
+  // Windows can cap constructor dimensions to one display's work area.
+  win.setBounds(bounds);
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setIgnoreMouseEvents(true); // click-through; the cat reads the cursor by polling
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -53,8 +56,16 @@ function openSettings() {
   settingsWin.webContents.on('did-finish-load', () => settingsWin.webContents.send('settings', settings));
 }
 
+function summonCat() {
+  const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const b = win.getBounds();
+  win.webContents.send('summon', { x: workArea.x + workArea.width / 2 - b.x, y: workArea.y + workArea.height - b.y });
+}
+
 function buildMenu() {
   tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Bring cat here', click: summonCat },
+    { type: 'separator' },
     { label: 'Interest level', enabled: false },
     ...LEVELS.map((label, i) => ({ label, type: 'radio', checked: settings.interest === i, click: () => applySettings({ interest: i }) })),
     { type: 'separator' },
@@ -75,10 +86,17 @@ app.whenReady().then(() => {
   tray.setToolTip('Desktop Cat');
   tray.on('click', openSettings);
   buildMenu();
-  win.webContents.on('did-finish-load', () => win.webContents.send('settings', settings));
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.send('settings', settings);
+    sendEnvironment();
+  });
   ipcMain.on('set-settings', (_, patch) => applySettings(patch));
 
-  const reposition = () => { if (!win.isDestroyed()) win.setBounds(virtualBounds()); };
+  const reposition = () => {
+    if (win.isDestroyed()) return;
+    win.setBounds(virtualBounds());
+    sendEnvironment();
+  };
   screen.on('display-added', reposition);
   screen.on('display-removed', reposition);
   screen.on('display-metrics-changed', reposition);
@@ -90,13 +108,16 @@ app.whenReady().then(() => {
     polling = true;
     try {
       const w = await getActiveWindow();
-      active = w && w.owner && w.owner.processId !== process.pid ? { ...w.bounds, title: w.title, app: w.owner.name } : null;
+      // active-win returns physical pixels; Electron's screen geometry uses DIPs.
+      active = w && w.owner && w.owner.processId !== process.pid ? {
+        ...(process.platform === 'win32' ? screen.screenToDipRect(null, w.bounds) : w.bounds), title: w.title, app: w.owner.name,
+      } : null;
     } catch { active = null; }
     polling = false;
   }, 700);
 
   let prevIdle = 0, prevCursor = null, lastTyping = 0;
-  setInterval(() => {
+  function sendEnvironment() {
     if (win.isDestroyed()) return;
     const p = screen.getCursorScreenPoint();
     const b = win.getBounds();
@@ -105,7 +126,9 @@ app.whenReady().then(() => {
     const still = prevCursor && prevCursor.x === p.x && prevCursor.y === p.y;
     if (idle < prevIdle && still) lastTyping = Date.now();
     prevIdle = idle; prevCursor = p;
+    const primary = screen.getPrimaryDisplay().id;
     const floors = screen.getAllDisplays().map((d) => ({
+      id: d.id, primary: d.id === primary, top: d.workArea.y - b.y,
       x0: d.workArea.x - b.x, x1: d.workArea.x + d.workArea.width - b.x, y: d.workArea.y + d.workArea.height - b.y,
     }));
     win.webContents.send('env', {
@@ -113,7 +136,8 @@ app.whenReady().then(() => {
       width: b.width, height: b.height, floors,
       active: active ? { x: active.x - b.x, y: active.y - b.y, width: active.width, height: active.height, title: active.title, app: active.app } : null,
     });
-  }, 50);
+  }
+  setInterval(sendEnvironment, 50);
 });
 
 app.on('window-all-closed', () => { if (!win || win.isDestroyed()) app.quit(); });

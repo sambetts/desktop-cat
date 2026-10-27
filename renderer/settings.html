@@ -15,7 +15,6 @@ input[type=range]{width:100%}.row{display:flex;justify-content:space-between;fon
 <label>Interest: <span id="lvl"></span></label>
 <input id="interest" type="range" min="0" max="4" step="1">
 <div class="row"><span>Ignore everything</span><span>Play with everything</span></div>
-<label><input id="sound" type="checkbox"> Meows and purrs</label>
 <label><input id="nightSleep" type="checkbox"> Sleep at night (23:00–07:00)</label>
 <label><input id="launchAtLogin" type="checkbox"> Start at login</label>
 <script>
@@ -23,11 +22,11 @@ const LEVELS = ['Ignore everything', 'Aloof', 'Curious', 'Playful', 'Play with e
 const $ = (id) => document.getElementById(id);
 const show = () => { $('lvl').textContent = LEVELS[$('interest').value]; };
 window.catApi.onSettings((s) => {
-  $('interest').value = s.interest; $('sound').checked = s.sound;
+  $('interest').value = s.interest;
   $('nightSleep').checked = s.nightSleep; $('launchAtLogin').checked = s.launchAtLogin; show();
 });
 $('interest').oninput = () => { show(); window.catApi.setSettings({ interest: +$('interest').value }); };
-for (const k of ['sound', 'nightSleep', 'launchAtLogin']) $(k).onchange = () => window.catApi.setSettings({ [k]: $(k).checked });
+for (const k of ['nightSleep', 'launchAtLogin']) $(k).onchange = () => window.catApi.setSettings({ [k]: $(k).checked });
 </script>
 </body>
 </html>
