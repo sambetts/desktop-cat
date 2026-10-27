@@ -1,11 +1,17 @@
 # Desktop Cat
 
-A cat that lives on your desktop (Electron, cross-platform).
+A cat that lives on your desktop (Electron, cross-platform). Requires Node.js 22.12+.
 
-    npm install
+    npm ci
     npm start          # tray icon: interest level, toys, settings
-    npm run dist       # package with electron-builder
+    npm run dist       # package with electron-builder (fetched on demand)
     npx electron scripts/selftest.js   # smoke test (use xvfb-run --no-sandbox on headless Linux)
+
+## Installing behind a restricted npm registry
+- The default install only needs `electron` and the optional `active-win`. `electron-builder` is not installed by `npm ci`; `npm run dist` downloads it with `npx`, so run packaging where the public npm registry is reachable.
+- `package-lock.json` is generated with `npm install --min-release-age=30`, because some corporate feeds don't serve very new releases. Use the same flag when updating dependencies.
+- `allowScripts` approves only `active-win`'s install script, which fetches its native binding from GitHub. If that fails, npm skips the optional package and the cat just won't perch on windows.
+- Electron downloads its binary from GitHub on the first `npm start`.
 
 ## Behaviour
 - Idle: sits, licks, stretches, wanders, sleeps when you're idle or at night (23:00–07:00).

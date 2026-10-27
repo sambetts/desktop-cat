@@ -5,12 +5,11 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder",
+    "dist": "npx --yes electron-builder@26 --publish never",
     "icon": "node scripts/make-icon.js"
   },
   "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^26.18.0"
+    "electron": "^44.4.5"
   },
   "optionalDependencies": {
     "active-win": "^8.2.1"
@@ -33,5 +32,8 @@
     "linux": {
       "target": "AppImage"
     }
+  },
+  "allowScripts": {
+    "active-win@8.2.1": true
   }
 }
