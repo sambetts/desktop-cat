@@ -46,6 +46,16 @@ const pixelCat = (() => {
       '.xxxxxx....',
     ]),
     frontLeg: ['xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcscx', 'xcccx', '.xxx.'],
+    // A front paw held up to be washed, toes on top; the forearm below it runs down into the chest.
+    groom: [
+      '.xxxxx.',
+      'xcxcxcx',
+      'xcccccx',
+      'xcccccx',
+      'xcccccx',
+      '.xcccx.',
+    ],
+    forearm: Array(6).fill('xcccx'),
     // Wrapped round the front paws; the tip (tailTip) stands up and flicks on its own.
     tailFront: [
       '.xxx....................',
@@ -172,7 +182,7 @@ const pixelCat = (() => {
     ],
   };
   // Colour points (e.g. Siamese) recolour these parts; the Zs are not part of the cat.
-  const pointParts = new Set(['head', 'frontLeg', 'tailFront', 'tailTip', 'tailUp', 'tailLow', 'curl', 'leg', 'legFar', 'legLong', 'legLongFar', 'paw', 'swat']);
+  const pointParts = new Set(['head', 'frontLeg', 'groom', 'forearm', 'tailFront', 'tailTip', 'tailUp', 'tailLow', 'curl', 'leg', 'legFar', 'legLong', 'legLongFar', 'paw', 'swat']);
   const zPalette = { x: '#362c40', c: '#fff0cf' };
   const letters = (colours = {}) => Object.fromEntries(catCoats.slots.filter((s) => colours[s.name]).map((s) => [s.key, colours[s.name]]));
   const blush = (colours) => (colours.g && colours.p ? catCoats.mix(colours.g, colours.p, 0.55) : colours.g);
@@ -261,7 +271,7 @@ const pixelCat = (() => {
       if (!licking && !swatting) part('frontLeg', 2, kneading && !knead ? -12 : -10);
       part('tailFront', -12, -6);
       part('tailTip', 8 + wag, -7);
-      [hx, hy] = [-11, eating ? -33 : -34];
+      [hx, hy] = licking ? [-10, -33] : [-11, -34]; // washing: head tilted down into the raised paw
       swatAt = [3, -14];
     } else if (stretch) {
       part('tailUp', -27, -31);
@@ -293,7 +303,7 @@ const pixelCat = (() => {
     part('head', hx, hy);
     // A slow blink (half closed, closed, half closed) is how cats say they trust you.
     const blink = reducedMotion.matches ? 0 : cat.blink || 0;
-    const closed = sleeping || stretch || eating || (licking && frame < 2) || t % 5 > 4.7 || (blink > 0.35 && blink < 1.05);
+    const closed = sleeping || stretch || eating || licking || t % 5 > 4.7 || (blink > 0.35 && blink < 1.05);
     const lidded = blink > 0 || loafing || kneading || cat.state === 'smug';
     // Eyes follow whatever has the cat's attention; pupils go wide for the hunt.
     const look = cat.look, ahead = !look || look.x * cat.dir >= 0, up = !!look && look.y < -50 * scale;
@@ -329,9 +339,13 @@ const pixelCat = (() => {
     rect('k', hx - 2, hy + 14, 2, 1); rect('k', hx - 1, hy + 16, 2, 1);
     rect('k', hx + 27, hy + 14, 2, 1); rect('k', hx + 26, hy + 16, 2, 1);
 
-    if (licking) { // a paw raised beside the mouth, the tongue reaching out to lick it
-      part('frontLeg', hx + 16, hy + 14);
-      rect('p', hx + 14, hy + 17, 2 + frame % 2, 1);
+    if (licking) {
+      // Washing: the paw is held to the mouth and licked in short bursts, lifting to meet the tongue.
+      const lick = t % 2.5 < 1.8 && frame % 2 === 1;
+      const px = hx + 15, py = hy + 15 - (lick ? 1 : 0), arm = -10 - (py + 6);
+      if (lick) rect('p', hx + 14, hy + 16, 1, 2);
+      ctx.drawImage(sprites.forearm, 0, 0, 5, arm, px + 1, py + 6, 5, arm);
+      part('groom', px, py);
     }
     if (swatting) part('swat', swatAt[0] + reach, swatAt[1]);
     ctx.restore();
