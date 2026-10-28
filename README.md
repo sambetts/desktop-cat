@@ -5,7 +5,7 @@ A pixel-art tabby that lives on your desktop (Electron, cross-platform). Require
 ![Desktop Cat, an orange pixel-art tabby sitting with its striped tail curled upward.](assets/cat-screenshot.png)
 
     npm ci
-    npm start          # tray icon: bring cat here, interest level, toys, settings
+    npm start          # tray icon: bring cat here, cat, size, interest level, toys, settings
     npm run dist       # package with electron-builder (fetched on demand)
     npx electron scripts/selftest.js   # smoke test (use xvfb-run --no-sandbox on headless Linux)
     npx electron scripts/selftest.js --multi-monitor   # simulated mixed-DPI four-screen regression test
@@ -17,15 +17,28 @@ A pixel-art tabby that lives on your desktop (Electron, cross-platform). Require
 - Electron downloads its binary from GitHub on the first `npm start`.
 
 ## Behaviour
-- Idle: sits, licks, stretches, wanders, sleeps when you're idle or at night (23:00–07:00).
+- Idle: sits, loafs, grooms, stretches, wanders, and naps when you're idle or at night (23:00–07:00). Before a nap it turns round a few times and kneads; it wakes with a stretch and a yawn, and washes after a meal.
 - Interest slider (0 ignore everything → 4 play with everything) controls how often and how eagerly it reacts.
-- Checks on you: walks to the cursor, notices typing (input with a still cursor), jumps onto the top of your active window (needs `active-win`; optional), paces across it while you type (level 4), and knocks a cup off the window edge (level 3+).
-- Toys from the tray: yarn ball, laser pointer (follows your cursor), food bowl.
-- Animated pixel-art poses with blinking, a swishing striped tail, and cream paws. Silent for now; no meows or purrs.
+- Checks on you: walks to the cursor, notices typing (input with a still cursor), sizes up and jumps onto the top of your active window (needs `active-win`; optional), paces across it while you type (level 4), and knocks a cup off the window edge (level 3+).
+- Toys from the tray: yarn ball, laser pointer (follows your cursor), food bowl. A ball that has stopped rolling gets stalked: belly low, a creep, a rear-end wiggle, then a pounce. If it misses, it grooms as if it meant to.
+- Climbing: a playful cat climbs up and down the edges between stacked screens and up the side of a window too tall to jump onto, to reach a yarn ball or explore. A lazier cat sits below what it can't reach, tail twitching and chattering, and may eventually work up the courage. Climbing is rare at low interest and common at level 4. A climbing or leaping cat may pass in front of a taskbar.
+- Body language: eyes follow what it's watching and go wide on the hunt, the tail twitches when it's hunting, it slow-blinks at a cursor resting quietly nearby, and at level 3+ it sometimes gets the zoomies, most often around dawn and dusk.
+- Animated pixel-art poses. Silent for now; no meows or purrs. Reduced-motion settings freeze the decorative animation, slow blinks and zoomies.
 - Starts on the primary monitor. Supports stacked, offset and mixed-DPI monitors, keeps the full sprite above shorter-screen edges, and returns to the primary screen after display-layout changes.
 - Lost the cat? Right-click the tray icon and choose **Bring cat here** to summon it onto that screen.
+
+## Cats and size
+- **Settings… → Choose your cat** shows a gallery of built-in cats: Marmalade (ginger tabby, the default), Midnight (black), Domino (tuxedo), Pebble (silver tabby), Mochi (Siamese) and Patches (calico). The tray's **Cat** submenu switches between them as well.
+- **Size** (tray or settings) runs from Tiny to Giant. Bigger cats walk, climb and jump further.
+- **Build a cat…** in settings: pick colours for each part of the coat, with optional Siamese-style colour points. Custom cats can be edited or deleted.
+- **Share** saves a cat as a `.desktopcat.json` file and **Import a cat…** adds one, so cats can be passed to other people. The format is plain JSON:
+
+      { "format": "desktop-cat.coat", "version": 1, "name": "Smokey", "description": "optional", "author": "optional",
+        "palette": { "fur": "#5a5e66", "eyes": "#d9b43c", ... }, "points": { ... } }
+
+  Palette keys are `fur`, `shade`, `markings`, `highlight`, `belly`, `outline`, `nose`, `eyes`, `pupil`, `glint` and `whiskers`, all `#rrggbb`. Missing colours fall back to the default cat's. Files from a newer version, or anything else that isn't a cat, are refused.
 
 ## Known limits
 - No global click detection (would need a native hook such as uiohook-napi).
 - Wayland: always-on-top transparent overlay, cursor polling and active-window lookup are unreliable.
-- Sprite artwork and animation live in `renderer/pixel-cat.js`; behaviour lives in `renderer/cat.js`.
+- Sprite artwork and animation live in `renderer/pixel-cat.js`, coats and the cat file format in `renderer/coats.js`, and behaviour in `renderer/cat.js`.

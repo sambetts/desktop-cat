@@ -20,7 +20,9 @@ desktop is not a sufficient model.
 - Keep the whole rendered sprite visible within the union of monitor work areas,
   not just its centre or an intersection with one display. Check floor selection,
   gaps, both travel directions, airborne movement, and window-perching paths that
-  can bypass floor clamping.
+  can bypass floor clamping. The one exception is transit: a cat that is climbing
+  or in the air may pass in front of a taskbar, but must still stay within the
+  union of whole screens.
 - Preserve the explicit `win.setBounds(bounds)` after `BrowserWindow`
   construction: Windows can cap constructor dimensions to one monitor's work
   area.

@@ -1,27 +1,94 @@
-const { app, BrowserWindow, Tray, Menu, screen, powerMonitor, nativeImage, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, screen, powerMonitor, nativeImage, ipcMain, dialog } = require('electron');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const coats = require('./renderer/coats.js');
 
 let getActiveWindow = null;
 try { getActiveWindow = require('active-win'); } catch { /* optional: perching disabled */ }
 
 const LEVELS = ['Ignore everything', 'Aloof', 'Curious', 'Playful', 'Play with everything'];
-const DEFAULTS = { interest: 2, nightSleep: true, launchAtLogin: false };
+const SIZES = ['Tiny', 'Small', 'Normal', 'Large', 'Huge', 'Giant']; // whole-pixel sprite scales 1–6
+const DEFAULTS = { interest: 2, nightSleep: true, launchAtLogin: false, coat: 'tabby', scale: 3, customCats: [] };
+const CAT_FILES = [{ name: 'Desktop Cat', extensions: ['json'] }];
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 let settings = { ...DEFAULTS };
 let win, tray, settingsWin;
 
+const catExists = (id, customCats = settings.customCats) => coats.all(customCats).some((c) => c.id === id);
+// Only accept known settings with valid values; custom cats change through their own IPC calls.
+function cleanSettings(patch, customCats) {
+  const clean = {};
+  if (!patch || typeof patch !== 'object') return clean;
+  if (Number.isInteger(patch.interest) && patch.interest >= 0 && patch.interest < LEVELS.length) clean.interest = patch.interest;
+  if (Number.isInteger(patch.scale) && patch.scale >= 1 && patch.scale <= SIZES.length) clean.scale = patch.scale;
+  for (const key of ['nightSleep', 'launchAtLogin']) if (typeof patch[key] === 'boolean') clean[key] = patch[key];
+  if (typeof patch.coat === 'string' && catExists(patch.coat, customCats)) clean.coat = patch.coat;
+  return clean;
+}
+
 function load() {
-  try { settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) }; } catch {}
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch {}
+  const customCats = (Array.isArray(saved?.customCats) ? saved.customCats : []).flatMap((c) => {
+    try { return [{ id: /^custom-[\w-]{1,64}$/.test(c.id) ? c.id : newCatId(), ...coats.normalize(c) }]; } catch { return []; }
+  });
+  settings = { ...DEFAULTS, customCats, ...cleanSettings(saved, customCats) };
 }
 function applySettings(patch) {
   settings = { ...settings, ...patch };
+  if (!catExists(settings.coat)) settings.coat = DEFAULTS.coat;
   fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
   fs.writeFileSync(settingsFile(), JSON.stringify(settings));
   app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
-  if (win && !win.isDestroyed()) win.webContents.send('settings', settings);
-  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('settings', settings);
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send('settings', settings);
   if (tray) buildMenu();
+}
+
+const newCatId = () => `custom-${crypto.randomUUID()}`;
+const fileName = (name) => name.replace(/[^\p{L}\p{N} _-]+/gu, '').trim() || 'cat';
+// Renderer calls get { error } back instead of a rejected promise, so messages reach the user unwrapped.
+const handle = (channel, fn) => ipcMain.handle(channel, async (event, ...args) => {
+  try { return { ok: true, ...(await fn(BrowserWindow.fromWebContents(event.sender), ...args)) }; } catch (error) { return { error: error.message }; }
+});
+const showDialog = (kind, parent, options) => parent ? dialog[kind](parent, options) : dialog[kind](options);
+
+function registerCatIpc() {
+  ipcMain.handle('get-settings', () => settings);
+  ipcMain.on('set-settings', (_, patch) => applySettings(cleanSettings(patch, settings.customCats)));
+  handle('save-cat', (_, raw) => {
+    const cat = coats.normalize(raw);
+    const id = settings.customCats.some((c) => c.id === raw.id) ? raw.id : newCatId();
+    const customCats = settings.customCats.some((c) => c.id === id)
+      ? settings.customCats.map((c) => (c.id === id ? { id, ...cat } : c))
+      : [...settings.customCats, { id, ...cat }];
+    applySettings({ customCats, coat: id });
+    return { id };
+  });
+  handle('delete-cat', (_, id) => {
+    applySettings({ customCats: settings.customCats.filter((c) => c.id !== id) });
+    return {};
+  });
+  handle('import-cat', async (parent) => {
+    const { canceled, filePaths } = await showDialog('showOpenDialog', parent, { title: 'Import a cat', filters: CAT_FILES, properties: ['openFile'] });
+    if (canceled || !filePaths?.length) return { canceled: true };
+    if (fs.statSync(filePaths[0]).size > 64 * 1024) throw new Error('That file is too big to be a Desktop Cat file');
+    const cat = coats.parseText(fs.readFileSync(filePaths[0], 'utf8'));
+    const id = newCatId();
+    applySettings({ customCats: [...settings.customCats, { id, ...cat }], coat: id });
+    return { id, name: cat.name };
+  });
+  handle('export-cat', async (parent, id) => {
+    const cat = coats.all(settings.customCats).find((c) => c.id === id);
+    if (!cat) throw new Error('That cat no longer exists');
+    const { canceled, filePath } = await showDialog('showSaveDialog', parent, {
+      title: `Share ${cat.name}`, filters: CAT_FILES,
+      defaultPath: path.join(app.getPath('documents'), `${fileName(cat.name)}.desktopcat.json`),
+    });
+    if (canceled || !filePath) return { canceled: true };
+    fs.writeFileSync(filePath, JSON.stringify(coats.toFile(cat), null, 2) + '\n');
+    return { file: filePath };
+  });
 }
 
 // One transparent window spanning every monitor, so the cat can walk between them.
@@ -70,11 +137,10 @@ function createWindow() {
 function openSettings() {
   if (settingsWin && !settingsWin.isDestroyed()) return settingsWin.focus();
   settingsWin = new BrowserWindow({
-    width: 340, height: 330, resizable: false, title: 'Desktop Cat', autoHideMenuBar: true,
+    width: 560, height: 680, minWidth: 420, minHeight: 420, title: 'Desktop Cat', autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
   settingsWin.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
-  settingsWin.webContents.on('did-finish-load', () => settingsWin.webContents.send('settings', settings));
 }
 
 function summonCat() {
@@ -84,8 +150,11 @@ function summonCat() {
 }
 
 function buildMenu() {
+  const radio = (label, checked, patch) => ({ label: label.replace(/&/g, '&&'), type: 'radio', checked, click: () => applySettings(patch) });
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Bring cat here', click: summonCat },
+    { label: 'Cat', submenu: coats.all(settings.customCats).map((c) => radio(c.name, settings.coat === c.id, { coat: c.id })) },
+    { label: 'Size', submenu: SIZES.map((label, i) => radio(label, settings.scale === i + 1, { scale: i + 1 })) },
     { type: 'separator' },
     { label: 'Interest level', enabled: false },
     ...LEVELS.map((label, i) => ({ label, type: 'radio', checked: settings.interest === i, click: () => applySettings({ interest: i }) })),
@@ -111,7 +180,7 @@ app.whenReady().then(() => {
     win.webContents.send('settings', settings);
     sendEnvironment();
   });
-  ipcMain.on('set-settings', (_, patch) => applySettings(patch));
+  registerCatIpc();
 
   const reposition = () => {
     if (win.isDestroyed()) return;
@@ -146,8 +215,12 @@ app.whenReady().then(() => {
     prevIdle = idle; prevCursor = p;
     const primary = screen.getPrimaryDisplay().id;
     const floors = screen.getAllDisplays().map((d) => {
-      const a = space.rect(d.workArea);
-      return { id: d.id, primary: d.id === primary, top: a.y, x0: a.x, x1: a.x + a.width, y: Math.floor(a.y + a.height) };
+      const a = space.rect(d.workArea), b = space.rect(d.bounds);
+      // `screen` is the whole display: a climbing or jumping cat may pass in front of a taskbar, but never rests on one.
+      return {
+        id: d.id, primary: d.id === primary, top: a.y, x0: a.x, x1: a.x + a.width, y: Math.floor(a.y + a.height),
+        screen: { x0: b.x, x1: b.x + b.width, top: b.y, bottom: b.y + b.height },
+      };
     });
     win.webContents.send('env', {
       cursor: space.point(p), idle, typing: Date.now() - lastTyping < 1500, hour: new Date().getHours(),
