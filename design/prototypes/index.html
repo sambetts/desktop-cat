@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Desktop Cat: design prototypes</title>
+<style>
+  body { margin: 24px; font: 15px/1.4 "Segoe UI", system-ui, sans-serif; background: #161b26; color: #e9e4da; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: #b8b2a6; }
+  .coats button { font: inherit; margin: 0 6px 6px 0; padding: 6px 12px; border-radius: 16px; border: 1px solid #3b4456; background: #222a38; color: inherit; cursor: pointer; }
+  .coats button[aria-pressed="true"] { background: #e9a94b; color: #1b1b1b; border-color: #e9a94b; }
+  .design { margin: 18px 0 26px; }
+  .design h2 { font-size: 17px; margin: 0; }
+  .design small { color: #b8b2a6; }
+  canvas { display: block; margin-top: 8px; border-radius: 8px; }
+</style>
+<script src="../../renderer/coats.js"></script>
+<script src="../../renderer/pixel-cat.js"></script>
+<script src="designs.js"></script>
+<h1>Desktop Cat: design prototypes</h1>
+<p>Each row is one design, animated. Pick a coat to compare; the first row is the cat the app draws now.</p>
+<div class="coats"></div>
+<div id="live"></div>
+<script>
+  const POSES = [['sit', 'Sitting'], ['walk', 'Walking'], ['sleep', 'Sleeping'], ['stalk', 'Stalking']];
+  const APP = { sit: { state: 'sit' }, walk: { state: 'walk', vx: 60 }, sleep: { state: 'sleep' }, stalk: { state: 'stalk', vx: 30 } };
+  const BG = ['#f4ede1', '#232b3a'];
+  const designs = [{ id: 'app', name: 'In the app', blurb: 'The cat Desktop Cat draws today, for comparison' }, ...catDesigns.list];
+
+  function cell(ctx, id, coat, pose, x, y, scale, t, blink) {
+    if (id === 'app') pixelCat.drawCoat(ctx, { x, y, t, dir: 1, vx: 0, vy: 0, air: false, swat: 0, ...APP[pose] }, coat, scale);
+    else catDesigns.draw(ctx, id, coat, pose, { x, y, scale, t, blink });
+  }
+  function row(canvas, id, coats, scale, t, blink) {
+    const cw = 72 * scale, ch = 54 * scale, ctx = canvas.getContext('2d');
+    coats.forEach((coat, c) => POSES.forEach(([pose], p) => {
+      const i = c * POSES.length + p;
+      ctx.fillStyle = BG[(c + p) % 2]; ctx.fillRect(i * cw, 0, cw, ch);
+      cell(ctx, id, coat, pose, i * cw + 36 * scale, 47 * scale, scale, t, blink);
+    }));
+  }
+
+  let coat = catCoats.builtIn[0];
+  const buttons = document.querySelector('.coats');
+  for (const c of catCoats.builtIn) {
+    const b = document.createElement('button');
+    b.textContent = `${c.name} (${c.description})`;
+    b.onclick = () => { coat = c; [...buttons.children].forEach((x) => x.setAttribute('aria-pressed', x === b)); };
+    b.setAttribute('aria-pressed', c === coat);
+    buttons.append(b);
+  }
+  const rows = designs.map((d, r) => {
+    const box = document.createElement('div'); box.className = 'design';
+    const title = document.createElement('h2'), blurb = document.createElement('small');
+    title.textContent = `${r === 0 ? '' : String.fromCharCode(64 + r) + '. '}${d.name}`;
+    blurb.textContent = d.blurb;
+    const canvas = document.createElement('canvas'); canvas.width = 72 * 3 * POSES.length; canvas.height = 54 * 3;
+    box.append(title, blurb, canvas); document.getElementById('live').append(box);
+    return [d.id, canvas];
+  });
+  const start = performance.now();
+  (function tick(now) {
+    const t = (now - start) / 1000, blink = t % 4.5 > 4.35;
+    for (const [id, canvas] of rows) row(canvas, id, [coat], 3, t, blink);
+    requestAnimationFrame(tick);
+  })(start);
+</script>

@@ -1,182 +1,165 @@
 const pixelCat = (() => {
-  // Sprite letters are palette slots from catCoats.slots (x outline, g fur, s markings, ...).
+  // Sprite letters are palette slots from catCoats.slots (x outline, g fur, s markings, ...); b is a blush mixed from fur and nose.
+  // Symmetric sprites are written as their left half plus the shared centre column.
+  const mirror = (rows) => rows.map((r) => r + [...r.slice(0, -1)].reverse().join(''));
   const art = {
-    head: [
-      '...xx.............xx....',
-      '...xgx...........xgx....',
-      '...xgpx.........xpgx....',
-      '...xgppx.......xppgx....',
-      '...xgpppxxxxxxxpppgx....',
-      '..xxggggssgggssggggxx...',
-      '.xogggggssgggssgggggox..',
-      '.xoggggggghhggggggggox..',
-      'xogghhhhggghggghhhhgggox.',
-      'xogghhhhggghggghhhhgggox.',
-      'xogggggggggggggggggggox.',
-      'xogggggggggggggggggggox.',
-      '.xoggggccccccccgggggox..',
-      '.xoggccccccccccccggox...',
-      '..xoccccccccccccccox....',
-      '...xccccccccccccccx.....',
-      '....xxccccccccccxx......',
-      '......xxxxxxxxxx........',
+    // A big round kitten head facing the viewer; the face (eyes, nose, mouth, whiskers) is drawn on top.
+    head: mirror([
+      '..xx..........',
+      '..xgx.........',
+      '..xgpx........',
+      '.xggppx.......',
+      '.xggpppxxxxxxx',
+      'xogggggghhgsgs',
+      'xoggggghhhgsgs',
+      'xogggggggggggs',
+      'xogggggggggggg',
+      'xogggggggggggg',
+      'xssggggggggggg',
+      'xogggggggggggg',
+      'xssggggggggggg',
+      'xogggggggggccc',
+      'xogbbbgggccccc',
+      '.xogggggcccccc',
+      '.xoggggccccccc',
+      '..xogggccccccc',
+      '...xxogccccccc',
+      '.....xxxxxxxxx',
+    ]),
+    // Sitting, facing the viewer: chest and hind paws. The front legs are separate so they can knead, groom and swat.
+    sit: mirror([
+      '.......xxxx',
+      '.....xxgggg',
+      '....xoggggc',
+      '...xoggggcc',
+      '...xogggccc',
+      '..xogggcccc',
+      '..xoggxcccc',
+      '.xossgxcccc',
+      '.xogggxcccc',
+      '.xossgxcccc',
+      'xoggggxcccc',
+      'xoggggxcccc',
+      'xoxxxxx....',
+      'xoxcccx....',
+      'xoxcccx....',
+      '.xxxxxx....',
+    ]),
+    frontLeg: ['xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcccx', 'xcscx', 'xcccx', '.xxx.'],
+    // Wrapped round the front paws; the tip (tailTip) stands up and flicks on its own.
+    tailFront: [
+      '.xxx....................',
+      'xgggxx..................',
+      'xogggsxxxxxxxxxxxxxxxgsx',
+      '.xooggsssgggsssgggsssggx',
+      '..xxoooooooooooooooooox.',
+      '....xxxxxxxxxxxxxxxxxx..',
     ],
-    sit: [
-      '.............xxxxxxx....',
-      '...........xxggghhggx...',
-      '..........xogggghhgggx..',
-      '.........xoggggccccggx..',
-      '........xogggggccccggx..',
-      '.......xoggggggccccggx..',
-      '......xosggggggccccggx..',
-      '.....xosgggggggccccggx..',
-      '....xosggggggggccccggx..',
-      '...xosgggggggggccccggx..',
-      '..xosggggggggggccccggx..',
-      '..xosgggssgggggccccggx..',
-      '.xosgggsssgggggccccggx..',
-      '.xosgggggggggggccccggx..',
-      'xosggggggggggggccccggx..',
-      'xosggggggggggggccccggx..',
-      'xosggggggggggggccccggx..',
-      'xosgggssgggggggccccggx..',
-      '.xosgggssggggggccccggx..',
-      '.xosgggggggggggccccggx..',
-      '..xosggggggggggccccggx..',
-      '...xxxxxxxxxxxxxxxxxx...',
-    ],
+    tailTip: ['.xx.', 'xgsx', 'xggx', 'xgsx'],
+    // Side-on bean of a body for walking, jumping, eating, stalking and climbing.
     body: [
-      '.....xxxxxxxxxxxxxxxx.......',
-      '...xxggggghhhggggggggxx.....',
-      '..xogggggghhhgggggggggox....',
-      '.xogggssgggggggssggggggox...',
-      'xoggggssgggggggssgggggggox..',
-      'xoggggssgggggggssgggggggox..',
-      'xoggggggggggggggggggggggox..',
-      'xoggggggggggggggggggggggox..',
-      '.xoggggggggggggggggccccgox..',
-      '.xosggggggggggggggccccccox..',
-      '..xosggggggggggggccccccox...',
-      '...xosssssssssssccccccox....',
-      '....xxxxxxxxxxxxxxxxxx.....',
+      '.....xxxxxxxxxxxxxxxx.....',
+      '...xxgggghhhhggggggggxx...',
+      '..xogsgggggsggggsggggggx..',
+      '.xogsgggggsggggsggggggggx.',
+      'xoggsgggggsggggsgggggggggx',
+      'xogggggggggggggggggggggggx',
+      'xogggggggggggggggggggggggx',
+      'xogggggggggggggggggggggggx',
+      'xogggggggggggggggggggggggx',
+      'xogggggggggggggggggccccccx',
+      'xoogggggggggggggggcccccccx',
+      '.xoogggggggggggggcccccccx.',
+      '..xooooooooooooooocccccx..',
+      '....xxxxxxxxxxxxxxxxxx....',
     ],
-    sleep: [
-      '..........xxxxxxxxxxxxxxxx..........',
-      '.......xxxgggggghhhhggggggxxx.......',
-      '.....xxogggggggghhhhggggggggoxx.....',
-      '....xogggggssggggggggssggggggggox....',
-      '...xoggggggssggggggggssgggggggggox...',
-      '..xogggggggssggggggggssggggggggggox..',
-      '..xoggggggggggggggggggggggggggggox..',
-      '.xoggggggggggggggggggggggggggggggox.',
-      '.xosgggggggggggggggggggggccccggggox.',
-      '.xosggggggggggggggggggccccccccgggox.',
-      '..xosggggggggggggggggccccccccccgox..',
-      '...xosgggggggggggggccccccccccccox...',
-      '....xosssssssssssssccccccccccox....',
-      '.....xxxxxxxxxxxxxxxxxxxxxxxx.....',
+    leg: ['xgggx', 'xgggx', 'xgggx', 'xgggx', 'xcccx', 'xcccx', '.xxx.'],
+    legFar: ['xooox', 'xooox', 'xooox', 'xooox', 'xcccx', 'xcccx', '.xxx.'],
+    paw: ['.xxx.', 'xcccx', 'xcccx', 'xcccx', '.xxx.'],
+    // A happy tail: straight up with a little forward curl at the tip.
+    tailUp: [
+      '....xxxxx..',
+      '...xgggggx.',
+      '..xggsxxsgx',
+      '..xgsx..xgx',
+      '.xggx...xx.',
+      '.xgsx......',
+      '.xggx......',
+      'xgggx......',
+      'xsssx......',
+      'xgggx......',
+      'xgggx......',
+      'xsssx......',
+      'xgggx......',
+      'xgggxx.....',
+      '.xgggx.....',
+      '..xxxx.....',
     ],
-    stretch: [
-      '.......xxxxxxxxxxx.................',
-      '.....xxggggghhhgggxx...............',
-      '...xxogggggghhhgggggxx.............',
-      '..xogggssggggggssgggggxx...........',
-      '.xoggggssggggggssgggggggxx.........',
-      'xogggggssggggggssgggggggggxx.......',
-      'xogggggggggggggggggggggggggxx......',
-      '.xosgggggggggggggggggggggggxx.....',
-      '..xosgggggggggggggggggccccgggxx....',
-      '...xosssssssssssssssssccccccgggxx..',
-      '....xxxxxxxxxxxxxxxxxxxxxxxxxxxx...',
-    ],
-    tail: [
-      '.....xxxxx....',
-      '...xxhggggx...',
-      '..xhggssgggx..',
-      '.xhggssxogggx.',
-      'xhggssx.xogox.',
-      'xhggsx..xosox.',
-      'xgggsx..xxxxx.',
-      'xgggsx........',
-      'xgggsx........',
-      'xoggox........',
-      '.xoggox.......',
-      '.xossgox......',
-      '..xossgox.....',
-      '..xogggox.....',
-      '...xogggox....',
-      '...xogggox....',
-      '....xosggox...',
-      '....xossggox..',
-      '.....xossggox.',
-      '......xogggox.',
-      '.......xogggx.',
-      '........xxxxx.',
-    ],
-    curl: [
-      '....xxxxxxxxxxxxxxxxxxxxxx......',
-      '..xxogggggggggggggggggggggxx....',
-      '.xogggssgggssgggssgggggggggox...',
-      'xoggggssgggssgggssggggggggggox..',
-      'xosggggggggggggggggggccccgggox..',
-      '.xossssssssssssssssssccccggox...',
-      '..xxxxxxxxxxxxxxxxxxxxxxxxx....',
-    ],
-    // Held low and straight behind a crouching cat, tip curled up.
+    // Held low and straight behind a crouching (or climbing) cat, tip curled up.
     tailLow: [
-      '.xx...........',
-      'xgsx..........',
-      'xgsxxxxxxxxxxx',
-      'xoggggsssggggg',
-      '.xosssggggssog',
-      '..xxxxxxxxxxxx',
+      '.xxx............',
+      'xgsgx...........',
+      'xggsxxxxxxxxxxxx',
+      'xgggggsssgggsssg',
+      '.xoggggggggggggg',
+      '..xooooooooooooo',
+      '...xxxxxxxxxxxxx',
     ],
-    leg: [
-      '..xxx.',
-      '.xosx.',
-      '.xogx.',
-      '.xogx.',
-      '.xggx.',
-      '.xggx.',
-      '.xggx.',
-      '.xggx.',
-      '.xggx.',
-      '.xggx.',
-      'xggggx',
-      'xccccx',
-      'xccccx',
-      'xcsccx',
-      '.xxxx.',
+    // Curled up in a ball, the tail wrapped round from the rump to the chin.
+    sleep: mirror([
+      '.......xxxxxxx',
+      '.....xxggghhhh',
+      '....xogggsgghh',
+      '...xoggsggsggg',
+      '..xoggsggsgggg',
+      '.xoggggggggggg',
+      'xogggggggggggg',
+      'xogggggggggggg',
+      'xogggggggggggg',
+      'xogggggggggggg',
+      'xooggggggggggg',
+      '.xoooggggggggg',
+      '..xxoooooooooo',
+      '....xxxxxxxxxx',
+    ]),
+    curl: [
+      '....xxx.....................',
+      '..xxoggx....................',
+      '.xoggggx....................',
+      'xsssssx..................xx.',
+      'xogggx..................xggx',
+      'xoggggxxxxx...........xxoggx',
+      'xoggggggssgxxxxxxxxxxxogggx.',
+      '.xogggggssggggssggggsggggx..',
+      '..xxogggssggggssgxxxxxxxx...',
+      '....xxxxxxxxxxxxx...........',
     ],
-    paw: [
-      '.xxxx.',
-      'xggggx',
-      'xggggx',
-      'xccccx',
-      'xccccx',
-      'xcsccx',
-      '.xxxx.',
+    // A play-bow stretch: rump and tail high, chest and chin down on outstretched front legs.
+    stretch: [
+      '...xxxxxx.................',
+      '.xxoggsshxxxx.............',
+      'xoggggssgggggxxx..........',
+      'xoggggggggggssggxx........',
+      'xoggggggggggssggggxx......',
+      '.xogggggggggggggggsgxx....',
+      '..xoggggggggggggggsgggx...',
+      '...xoogggggggggggggggggx..',
+      '....xxooggggggggggggggggx.',
+      '......xxoogggggggggggggggx',
+      '........xxooogggggcccggggx',
+      '..........xxxoooogcccccccx',
+      '.............xxxxocccccxx.',
+      '.................xxxxxx...',
     ],
-    groom: [
-      '.........xxxx.',
-      '........xccccx',
-      '........xcsccx',
-      '.......xcccccx',
-      '......xggcccxx',
-      '.....xggggxx..',
-      '....xggggx....',
-      '...xogggx.....',
-      '..xogggx......',
-      '.xogggx.......',
-      '..xxxxx.......',
-    ],
+    legLong: ['xgggx', 'xgggx', 'xgggx', 'xgggx', 'xgggx', 'xgggx', 'xgggx', 'xcccx', 'xcccx', '.xxx.'],
+    legLongFar: ['xooox', 'xooox', 'xooox', 'xooox', 'xooox', 'xooox', 'xooox', 'xcccx', 'xcccx', '.xxx.'],
+    // A front leg reaching forward: a swat, or resting flat in a stretch.
     swat: [
-      '..................xxxx.',
-      '...............xxxccccx',
-      'xxxxxxxxxxxxxxxgggccscx',
-      'xgggggggggggggggggccccx',
-      'xosgggggggggggggggcccxx',
-      '.xxxxxxxxxxxxxxxxxxxx..',
+      '.............xxx.',
+      'xxxxxxxxxxxxxcccx',
+      'xcccccccccccccscx',
+      'xcccccccccccccccx',
+      'xxxxxxxxxxxxxxxx.',
     ],
     z: [
       'xxxxxx.',
@@ -189,11 +172,13 @@ const pixelCat = (() => {
     ],
   };
   // Colour points (e.g. Siamese) recolour these parts; the Zs are not part of the cat.
-  const pointParts = new Set(['head', 'tail', 'tailLow', 'leg', 'paw', 'groom', 'swat', 'curl']);
+  const pointParts = new Set(['head', 'frontLeg', 'tailFront', 'tailTip', 'tailUp', 'tailLow', 'curl', 'leg', 'legFar', 'legLong', 'legLongFar', 'paw', 'swat']);
   const zPalette = { x: '#362c40', c: '#fff0cf' };
   const letters = (colours = {}) => Object.fromEntries(catCoats.slots.filter((s) => colours[s.name]).map((s) => [s.key, colours[s.name]]));
+  const blush = (colours) => (colours.g && colours.p ? catCoats.mix(colours.g, colours.p, 0.55) : colours.g);
   function paint(coat) {
     const body = letters(coat.palette), face = { ...body, ...letters(coat.points) };
+    body.b = blush(body); face.b = blush(face);
     const sprites = Object.fromEntries(Object.entries(art).map(([name, rows]) => {
       const palette = name === 'z' ? zPalette : pointParts.has(name) ? face : body;
       const image = document.createElement('canvas');
@@ -240,8 +225,9 @@ const pixelCat = (() => {
       : cat.state === 'smug' ? [0, 1, 0, -1][Math.floor(t * 6) % 4]
         : seated && t % 7 < 1 ? [0, 1, 0, -1][Math.floor(t * 4) % 4] : 0;
     const kneading = cat.state === 'settle' && since > 1.2, knead = kneading && Math.floor(t * 4) % 2 === 0;
+    const swatting = cat.swat > 0 && !climbing, reach = cat.swat < 0.2 ? 1 : 0;
     const part = (name, x, y) => ctx.drawImage(sprites[name], x, y);
-    const rect = (color, x, y, w, h) => { ctx.fillStyle = palette[color]; ctx.fillRect(x, y, w, h); };
+    const rect = (color, x, y, w = 1, h = 1) => { ctx.fillStyle = palette[color]; ctx.fillRect(x, y, w, h); };
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     // Climbing turns the body and walk cycle on their side: feet against a wall in the facing direction.
@@ -251,47 +237,58 @@ const pixelCat = (() => {
       ctx.scale(cat.dir * scale, scale);
     }
 
+    // Each pose places the head (hx, hy) and, if a paw is swatting, where the swat reaches from.
+    let hx, hy, swatAt = [5, -13];
     if (sleeping || loafing) {
-      part('sleep', -24, -16 + bob);
+      part('sleep', -20, -14 + bob);
+      part('curl', -23, -10);
+      [hx, hy] = sleeping ? [-1, -24] : [-4, -27];
     } else if (crouching) {
       // Low to the ground; just before a pounce the raised rear end wiggles.
-      const wx = wiggling ? [0, 1, 0, -1][Math.floor(t * 12) % 4] : 0;
+      const wx = wiggling ? [0, 1, 0, -1][Math.floor(t * 12) % 4] : 0, creep = stride / 2;
       part('tailLow', -27 + wx, (wiggling ? -17 : -15) + (wag < 0 ? -1 : 0));
-      part('paw', -15 + wx - stride, -7);
-      part('paw', -10 + wx + stride, -7);
-      part('body', -18, -16);
-      if (wiggling) ctx.drawImage(sprites.body, 0, 0, 12, 13, -18 + wx, -18, 12, 13);
-      part('paw', 1 + stride, -7);
-      part('paw', 6 - stride, -7);
+      part('paw', -12 + wx - creep, -5);
+      part('paw', 5 + creep, -5);
+      part('body', -15, -17);
+      if (wiggling) ctx.drawImage(sprites.body, 0, 0, 12, 14, -15 + wx, -19, 12, 14);
+      part('paw', -8 + creep, -5);
+      if (!swatting) part('paw', 8 - creep, -5);
+      [hx, hy] = [-2, -27];
+      swatAt = [6, -9];
+    } else if (seated) {
+      part('sit', -8, -16);
+      part('frontLeg', -2, knead ? -12 : -10); // kneading: front paws take turns pressing down
+      if (!licking && !swatting) part('frontLeg', 2, kneading && !knead ? -12 : -10);
+      part('tailFront', -12, -6);
+      part('tailTip', 8 + wag, -7);
+      [hx, hy] = [-11, eating ? -33 : -34];
+      swatAt = [3, -14];
+    } else if (stretch) {
+      part('tailUp', -27, -31);
+      part('legLongFar', -21, -10);
+      part('stretch', -26, -17);
+      part('legLong', -24, -10);
+      part('swat', -2, -5);
+      [hx, hy] = [-1, -23];
     } else {
-      part('tail', (seated ? -23 : -26) + wag, (seated ? -32 : -31) + bob);
-      if (seated) {
-        part('sit', -13, -24);
-        part('paw', -12, -7);
-        part('paw', 0, kneading && !knead ? -9 : -7); // kneading: front paws take turns pressing down
-        if (!licking && cat.swat <= 0) part('leg', 6, knead ? -17 : -15);
-      } else if (stretch) {
-        part('leg', -17, -15);
-        part('leg', 12, -15);
-        part('stretch', -21, -22);
-        part('paw', 17, -7);
-      } else {
-        part('leg', -10 - stride, airborne ? -20 : -16);
-        part('leg', 1 + stride, airborne ? -20 : -16);
-        part('body', -18, -22 + bob);
-        part('leg', -15 + stride, airborne ? -17 : -15 - (moving && frame === 1 ? 2 : 0));
-        if (cat.swat <= 0) part('leg', 6 - stride, airborne ? -17 : -15 - (moving && frame === 3 ? 2 : 0));
-      }
+      // Standing, walking, leaping (legs tucked and splayed), eating with the head down, or climbing.
+      const tuck = airborne ? 2 : 0;
+      part('legFar', -8 - stride - tuck, -7 - tuck);
+      part('legFar', 7 + stride + tuck, -7 - tuck);
+      if (climbing) part('tailLow', -26, -15);
+      else part('tailUp', -17, -32 + bob);
+      part('body', -14, -20 + bob);
+      part('leg', -11 + stride - tuck, -7 - tuck - (moving && frame === 1 ? 1 : 0));
+      if (!swatting) part('leg', 4 - stride + tuck, -7 - tuck - (moving && frame === 3 ? 1 : 0));
+      [hx, hy] = [-1, eating ? -27 + frame % 2 : -36 + bob];
     }
 
-    let hx = stretch ? 3 : sleeping ? 1 : crouching ? 3 : loafing ? -4 : seated ? -1 : 0;
-    let hy = (sleeping ? -23 : stretch ? -24 : crouching ? -27 : loafing ? -28 : eating ? -27 + frame % 2 : seated ? -38 : -33) + bob;
     if (climbing) { // the head stays upright, peering out from the top of the climb
       ctx.restore(); ctx.save();
       ctx.imageSmoothingEnabled = false;
       ctx.translate(Math.round(cat.x), Math.round(cat.y));
       ctx.scale(cat.dir * scale, scale);
-      hx = -27; hy = -51;
+      hx = -29; hy = -51;
     }
     part('head', hx, hy);
     // A slow blink (half closed, closed, half closed) is how cats say they trust you.
@@ -301,40 +298,42 @@ const pixelCat = (() => {
     // Eyes follow whatever has the cat's attention; pupils go wide for the hunt.
     const look = cat.look, ahead = !look || look.x * cat.dir >= 0, up = !!look && look.y < -50 * scale;
     const wide = hunting || (cat.state === 'chase' && airborne);
-    for (const x of [5, 15]) {
-      if (closed) {
-        rect('x', hx + x, hy + 10, 4, 1);
-        rect('s', hx + x + 1, hy + 11, 2, 1);
+    for (const ex of [hx + 5, hx + 17]) {
+      const ey = hy + 8;
+      if (closed) { // a contented upside-down smile
+        rect('x', ex, ey + 3); rect('x', ex + 4, ey + 3); rect('x', ex + 1, ey + 4, 3, 1);
       } else if (lidded) {
-        rect('x', hx + x, hy + 9, 4, 2);
-        rect('e', hx + x + 1, hy + 11, 2, 1);
-      } else {
-        const py = hy + (up ? 9 : 10);
-        rect('x', hx + x, hy + 9, 4, 4);
-        rect('e', hx + x + 1, hy + 9, 2, 3);
-        rect('d', wide ? hx + x + 1 : hx + x + (ahead ? 2 : 1), py, wide ? 2 : 1, 3);
-        rect('w', hx + x + (ahead ? 1 : 2), py, 1, 1);
+        rect('x', ex, ey + 2, 5, 1); rect('x', ex, ey + 3, 1, 2); rect('x', ex + 4, ey + 3, 1, 2); rect('x', ex + 1, ey + 5, 3, 1);
+        rect('e', ex + 1, ey + 3, 3, 2);
+        rect('d', ex + (ahead ? 2 : 1), ey + 3, 2, 2);
+      } else { // big round eyes with a sparkle
+        rect('x', ex + 1, ey, 3, 1); rect('x', ex, ey + 1, 1, 4); rect('x', ex + 4, ey + 1, 1, 4); rect('x', ex + 1, ey + 5, 3, 1);
+        rect('e', ex + 1, ey + 1, 3, 4);
+        const px = wide ? ex + 1 : ex + (ahead ? 2 : 1), py = ey + (up ? 1 : 2), pw = wide ? 3 : 2;
+        rect('d', px, py, pw, 3);
+        rect('w', px, py);
+        if (wide) rect('w', px + 2, py + 2);
       }
     }
-    rect('p', hx + 11, hy + 13, 2, 1);
-    rect('s', hx + 11, hy + 14, 2, 1);
-    rect('x', hx + 10, hy + 15, 1, 1); rect('x', hx + 13, hy + 15, 1, 1);
-    rect('k', hx + 1, hy + 13, 3, 1); rect('k', hx + 20, hy + 13, 3, 1);
-    rect('k', hx, hy + 15, 3, 1); rect('k', hx + 18, hy + 15, 6, 1);
+    rect('p', hx + 12, hy + 14, 3, 1); rect('p', hx + 13, hy + 15);
     if (stretch && since > 0.4 && since < 1.6) { // a big yawn
-      rect('x', hx + 10, hy + 14, 4, 4);
-      rect('p', hx + 11, hy + 15, 2, 2);
+      rect('x', hx + 11, hy + 16, 5, 4);
+      rect('p', hx + 12, hy + 17, 3, 2);
     } else if (cat.watch && frame % 2) { // chattering at prey it can't reach
-      rect('x', hx + 10, hy + 15, 4, 2);
-      rect('p', hx + 11, hy + 15, 2, 1);
+      rect('x', hx + 11, hy + 16, 5, 2);
+      rect('p', hx + 12, hy + 16, 3, 1);
+    } else { // a little ω mouth
+      for (const mx of [11, 13, 15]) rect('x', hx + mx, hy + 16);
+      rect('x', hx + 12, hy + 17); rect('x', hx + 14, hy + 17);
     }
+    rect('k', hx - 2, hy + 14, 2, 1); rect('k', hx - 1, hy + 16, 2, 1);
+    rect('k', hx + 27, hy + 14, 2, 1); rect('k', hx + 26, hy + 16, 2, 1);
 
-    if (sleeping || loafing) part('curl', -24, -7);
-    if (licking) {
-      part('groom', 1, -20);
-      rect('p', hx + 11, hy + 17, 2, 2 + frame % 2);
+    if (licking) { // a paw raised beside the mouth, the tongue reaching out to lick it
+      part('frontLeg', hx + 16, hy + 14);
+      rect('p', hx + 14, hy + 17, 2 + frame % 2, 1);
     }
-    if (cat.swat > 0 && !climbing) part('swat', 3 + (cat.swat < 0.2 ? 1 : 0), -19);
+    if (swatting) part('swat', swatAt[0] + reach, swatAt[1]);
     ctx.restore();
 
     if (sleeping) {

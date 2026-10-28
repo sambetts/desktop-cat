@@ -2,7 +2,7 @@
 
 A pixel-art tabby that lives on your desktop (Electron, cross-platform). Requires Node.js 22.12+.
 
-![Desktop Cat, an orange pixel-art tabby sitting with its striped tail curled upward.](assets/cat-screenshot.png)
+![Desktop Cat, a round-faced orange pixel-art tabby kitten sitting with its striped tail wrapped round its paws.](assets/cat-screenshot.png)
 
     npm ci
     npm start          # tray icon: bring cat here, cat, size, interest level, toys, settings
@@ -42,3 +42,4 @@ A pixel-art tabby that lives on your desktop (Electron, cross-platform). Require
 - No global click detection (would need a native hook such as uiohook-napi).
 - Wayland: always-on-top transparent overlay, cursor polling and active-window lookup are unreliable.
 - Sprite artwork and animation live in `renderer/pixel-cat.js`, coats and the cat file format in `renderer/coats.js`, and behaviour in `renderer/cat.js`.
+- Other cat designs (Classic, Floof and Bean) are kept as prototypes in `design/prototypes/`. Open its `index.html` in a browser to see them animated next to the app's cat; `options.png` is the original comparison.
