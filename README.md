@@ -2,7 +2,7 @@
 
 A pixel-art tabby that lives on your desktop (Electron, cross-platform). Requires Node.js 22.12+.
 
-![Desktop Cat, a round-faced orange pixel-art tabby kitten sitting with its striped tail wrapped round its paws.](assets/cat-screenshot.png)
+<img src="assets/cat-lineup.png" width="788" alt="Desktop Cat's six built-in pixel-art kittens sitting in a row: Marmalade (ginger tabby), Midnight (black cat), Domino (tuxedo), Pebble (silver tabby), Mochi (Siamese) and Patches (calico).">
 
     npm ci
     npm start          # tray icon: bring cat here, cat, size, interest level, toys, settings
