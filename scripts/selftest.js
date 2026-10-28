@@ -1,6 +1,6 @@
 // Smoke test: electron scripts/selftest.js
 const assert = require('node:assert/strict');
-const { app, BrowserWindow, Tray, screen, dialog } = require('electron');
+const { app, BrowserWindow, Menu, Tray, screen, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const multiMonitor = process.argv.includes('--multi-monitor');
@@ -107,6 +107,7 @@ function checkSprites(scale = 3) {
     ['Kneading', { state: 'settle', stateTime: 1.5 }], ['Yawning', { state: 'stretch', stateTime: 1 }],
     ['Slow blink', { blink: 0.7 }], ['Chattering', { watch: true, t: 0.125, look: { x: 0, y: -400 } }],
     ['Watching', { look: { x: -200, y: -300 } }],
+    ['Batting', { state: 'bat', paw: { x: 20 * s, y: -10 * s } }], ['Paw raised', { state: 'bat', paw: { x: 18 * s, y: -26 * s } }],
   ];
   const atlas = document.createElement('canvas');
   atlas.width = image.width * 5; atlas.height = image.height * Math.ceil(poses.length / 5);
@@ -418,7 +419,7 @@ function checkClimbing(projection) {
   };
   const pose = (x, y, state, extra = {}) => {
     Object.assign(cat, { x, y, vx: 0, vy: 0, dir: 1, state, stateTime: 0, dur: 60, air: false, onWindow: false, ignoreWin: false, swat: 0, climb: null, landThen: null,
-      pounce: null, leap: null, blink: 0, calm: 0, look: null, ...extra });
+      pounce: null, leap: null, blink: 0, calm: 0, look: null, bat: null, paw: null, batCool: 0, excite: 0, dribble: false, ...extra });
     previousBox = null;
   };
   const run = (label, seconds, done, each = () => {}) => {
@@ -430,7 +431,7 @@ function checkClimbing(projection) {
     }
     throw new Error(`${label}: gave up after ${seconds}s, ${cat.state} at (${Math.round(cat.x)}, ${Math.round(cat.y)}) having been ${[...states].join('/')}`);
   };
-  const snap = (label) => snapshots.push({ label, cat: { ...cat }, toys: toys.map((t) => ({ ...t })), active: env.active && { ...env.active } });
+  const snap = (label) => snapshots.push({ label, cat: { ...cat }, toys: toys.map((t) => ({ ...t })), active: env.active && { ...env.active }, cursor: /cursor/.test(label) && { ...env.cursor } });
   try {
     env = { ...env, floors, width: projection ? env.width : 2700, height: projection ? env.height : 2700, active: null, typing: false, idle: 0, hour: 12 };
     settings = { ...settings, interest: 3, nightSleep: false };
@@ -467,7 +468,7 @@ function checkClimbing(projection) {
     pose(start, lower.y, 'chase', { daring: true });
     snap('Wants the ball upstairs');
     let climbing = false;
-    const up = run('Climbing to the ball', 40, () => cat.y === upper.y && (['stalk', 'ready'].includes(cat.state) || (cat.state === 'chase' && Math.abs(cat.x - toys[0].x) <= 30)), () => {
+    const up = run('Climbing to the ball', 40, () => cat.y === upper.y && (['stalk', 'ready', 'bat'].includes(cat.state) || (cat.state === 'chase' && Math.abs(cat.x - toys[0].x) <= 30)), () => {
       if (cat.state === 'climb' && !climbing) { climbing = true; snap('Starts climbing'); }
       if (cat.state === 'climb' && cat.y < (upper.y + lower.y) / 2 && snapshots.length < 4) snap('Climbing');
     });
@@ -531,6 +532,42 @@ function checkClimbing(projection) {
     });
     snap('I meant to do that');
 
+    // A ball lying close by gets patted along: paw up, tap, follow it, tap again.
+    toys = [{ kind: 'yarn', x: groundX + 60 * u, y: lower.y, vx: 0, vy: 0 }];
+    pose(groundX, lower.y, 'chase');
+    let pats = 0, previous = cat.state, rolled = 0, ballX = toys[0].x;
+    const dribble = run('Dribbling', 30, () => pats >= 3 && cat.state === 'chase', () => {
+      if (cat.state === 'bat' && previous !== 'bat') pats++;
+      previous = cat.state; rolled += Math.abs(toys[0].x - ballX); ballX = toys[0].x;
+      if (cat.state === 'bat' && cat.stateTime % BAT_CYCLE < 0.2 && cat.stateTime > 0.1 && !seen('Paw up...')) snap('Paw up...');
+      if (cat.state === 'bat' && cat.bat?.struck === cat.bat?.swipes - 1 && !seen('Pat!')) snap('Pat!');
+    });
+    if (dribble.has('stalk') || dribble.has('jump')) throw new Error('A cat patting a ball along must keep patting it, not stalk or pounce');
+    if (rolled < 200) throw new Error(`Patting must move the ball along (only ${Math.round(rolled)} px)`);
+
+    // An excited, playful cat bats at a cursor wiggled within reach, and never moves it.
+    const wiggle = (t) => { env.cursor = { x: groundX + (30 + (Math.floor(t / step) % 2) * 12) * u, y: lower.y - 50 * u }; cursorSpeed = 12 * u; };
+    pose(groundX, lower.y, 'sit');
+    toys = []; wiggle(0);
+    Math.random = () => 0.001;
+    let onTarget = false;
+    const swipes = run('Batting at the cursor', 10, () => onTarget, (t) => {
+      const phase = cat.stateTime % BAT_CYCLE;
+      if (cat.state === 'bat' && cat.stateTime > BAT_CYCLE && phase >= 0.2 && phase < 0.34) {
+        onTarget = !!cat.paw && Math.hypot(cat.paw.x - (env.cursor.x - cat.x), cat.paw.y - (env.cursor.y - cat.y)) < 1;
+        if (!seen('Batting at the cursor')) snap('Batting at the cursor');
+      }
+      wiggle(t + step);
+    });
+    if (!swipes.has('bat')) throw new Error('An excited cat must swipe its paw at a cursor wiggled within reach');
+    // An aloof cat can't be bothered.
+    settings = { ...settings, interest: 1 };
+    pose(groundX, lower.y, 'sit');
+    const aloof = new Set();
+    for (let t = 0; t < 10; t += step) { wiggle(t); update(step); aloof.add(cat.state); }
+    if (aloof.has('bat')) throw new Error('An aloof cat must not bat at the cursor');
+    settings = { ...settings, interest: 3 }; cursorSpeed = 0;
+
     // Settling down for a nap: turns round, kneads, sleeps, then wakes with a stretch and a yawn.
     toys = [];
     pose(groundX, lower.y, 'sit');
@@ -577,6 +614,12 @@ function checkClimbing(projection) {
       if (shot.active) { sheet.fillStyle = '#9fb7c9'; sheet.fillRect(x + shot.active.x - ox, y + shot.active.y - oy, shot.active.width, shot.active.height); }
       for (const t of shot.toys) { sheet.fillStyle = '#d33'; sheet.beginPath(); sheet.arc(x + t.x - ox, y + t.y - 12 - oy, 12, 0, 7); sheet.fill(); }
       pixelCat.draw(sheet, { ...shot.cat, x: x + shot.cat.x - ox, y: y + shot.cat.y - oy });
+      if (shot.cursor) { // an arrow pointer
+        const cx = x + shot.cursor.x - ox, cy = y + shot.cursor.y - oy;
+        sheet.beginPath(); sheet.moveTo(cx, cy); sheet.lineTo(cx, cy + 17); sheet.lineTo(cx + 4, cy + 13); sheet.lineTo(cx + 7, cy + 19);
+        sheet.lineTo(cx + 9, cy + 18); sheet.lineTo(cx + 6, cy + 12); sheet.lineTo(cx + 12, cy + 12); sheet.closePath();
+        sheet.fillStyle = '#ffffff'; sheet.fill(); sheet.strokeStyle = '#000000'; sheet.lineWidth = 1; sheet.stroke();
+      }
       sheet.fillStyle = '#202735'; sheet.fillRect(x, y, crop, 26);
       sheet.fillStyle = '#ffffff'; sheet.font = '14px sans-serif'; sheet.fillText(shot.label, x + 10, y + 18);
       sheet.restore();
@@ -741,6 +784,58 @@ async function checkGallery(overlay, output) {
   }
 }
 
+// The overlay lets clicks through except over the cat itself, which can be right-clicked for the menu.
+async function checkCatMenu(overlay) {
+  const js = (code) => overlay.webContents.executeJavaScript(code);
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const waitFor = async (what, check) => {
+    for (const deadline = Date.now() + 3000; Date.now() < deadline; await sleep(20)) if (await check()) return;
+    throw new Error(`Timed out waiting for ${what}`);
+  };
+  const ignoring = [], menus = [];
+  const saved = { ignore: overlay.setIgnoreMouseEvents, popup: Menu.prototype.popup, cursor: screen.getCursorScreenPoint };
+  overlay.setIgnoreMouseEvents = function (ignore, ...rest) { ignoring.push(ignore); return saved.ignore.call(this, ignore, ...rest); };
+  Menu.prototype.popup = function () { menus.push(this); };
+  // A cursor resting just above the primary screen's floor, where the sitting cat's front paws will be.
+  const area = screen.getPrimaryDisplay().workArea;
+  screen.getCursorScreenPoint = () => ({ x: Math.round(area.x + area.width / 2), y: area.y + area.height - 15 });
+  const before = await js('({ interest: settings.interest })');
+  try {
+    await sleep(150);
+    const spot = await js(`(() => {
+      settings = { ...settings, interest: 0 }; toys = [];
+      const p = env.cursor, cat0 = { x: Math.round(p.x), y: floorAt(p.x, p.y) };
+      placeCat(cat0); cat.dur = 60;
+      const box = pixelCat.box(cat);
+      return { cursor: p, onCat: pixelCat.hit(cat, p.x, p.y), corner: { x: box.left + 2, y: box.top + 2 }, cornerHit: pixelCat.hit(cat, box.left + 2, box.top + 2) };
+    })()`);
+    assert.ok(spot.onCat, 'The test cursor must be over the cat');
+    assert.equal(spot.cornerHit, false, 'Transparent pixels around the cat are not the cat');
+    await waitFor('the overlay to catch clicks over the cat', () => ignoring.at(-1) === false);
+
+    const rightClick = ({ x, y }) => {
+      for (const type of ['mouseDown', 'mouseUp']) overlay.webContents.sendInputEvent({ type, x: Math.round(x), y: Math.round(y), button: 'right', clickCount: 1 });
+    };
+    rightClick(spot.cursor);
+    await waitFor('the cat menu', () => menus.length === 1);
+    const labels = menus[0].items.map((item) => item.label);
+    assert.equal(labels[0], 'Cat', 'The cat menu needn\'t offer to bring the cat');
+    for (const label of ['Size', 'Interest level', 'Toss a yarn ball', 'Laser pointer (20s)', 'Fill food bowl', 'Settings…', 'Quit']) {
+      assert.ok(labels.includes(label), `The cat menu must include ${label}`);
+    }
+    rightClick(spot.corner);
+    await sleep(200);
+    assert.equal(menus.length, 1, 'Right-clicking beside the cat must not open the menu');
+
+    await js('cat.x += 400 * pixelCat.scale / 3, 0');
+    await waitFor('the overlay to go back to click-through', () => ignoring.at(-1) === true);
+    console.log('PASS: right-click menu on the cat, click-through everywhere else');
+  } finally {
+    overlay.setIgnoreMouseEvents = saved.ignore; Menu.prototype.popup = saved.popup; screen.getCursorScreenPoint = saved.cursor;
+    await js(`settings = { ...settings, interest: ${before.interest} }, 0`);
+  }
+}
+
 app.whenReady().then(async () => {
   let stage = 'overlay startup';
   const timeout = setTimeout(() => { console.error(`Smoke test timed out during ${stage}`); app.exit(1); }, 120000);
@@ -800,8 +895,15 @@ app.whenReady().then(async () => {
       };
       const shot = (pose) => { p.clearRect(0, 0, c.width, c.height); pixelCat.draw(p, pose); return c.toDataURL(); };
       const sitting = { ...base, state: 'sit', vx: 0 };
-      return [still(base), still({ ...base, state: 'climb', vx: 0, vy: -60, x: 159, y: 156 }), still({ ...base, state: 'ready', vx: 0 }), shot({ ...sitting, blink: 0.7 }) === shot(sitting)];
-    })()`), [true, true, true, true], 'Reduced motion must freeze decorative sprite animation, climbing, wiggling and blinking included');
+      // A cat batting at a cursor holds its paw out instead of swiping up and down.
+      const saved = { cat: { ...cat }, env }, paws = new Set();
+      try {
+        env = { ...env, cursor: { x: cat.x + 40, y: cat.y - 40 } };
+        Object.assign(cat, { state: 'bat', dir: 1, bat: { what: 'cursor', swipes: 3, struck: -1 } });
+        for (let i = 0; i < 40; i++) { cat.stateTime = i * 0.025; batStep(); paws.add(JSON.stringify(cat.paw)); }
+      } finally { Object.assign(cat, saved.cat); env = saved.env; }
+      return [still(base), still({ ...base, state: 'climb', vx: 0, vy: -60, x: 159, y: 156 }), still({ ...base, state: 'ready', vx: 0 }), shot({ ...sitting, blink: 0.7 }) === shot(sitting), paws.size];
+    })()`), [true, true, true, true, 1], 'Reduced motion must freeze decorative sprite animation, climbing, wiggling, blinking and batting included');
     // Behaviour checks and their snapshots run with full motion, whatever this PC's accessibility setting is.
     await overlay.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     stage = 'behaviour checks';
@@ -876,6 +978,9 @@ app.whenReady().then(async () => {
     if (climbs[2]) fs.writeFileSync(path.join(output, 'cat-climbing-desktop.png'), Buffer.from(climbs[2].png, 'base64'));
     fs.writeFileSync(path.join(output, 'cat-shot.png'), (await overlay.webContents.capturePage()).toPNG());
     fs.writeFileSync(path.join(output, 'cat-crossings.png'), Buffer.from((physicalCrossing || crossing).png, 'base64'));
+
+    stage = 'right-click menu';
+    await checkCatMenu(overlay);
     if (multiMonitor) {
       stage = 'summoning and display changes';
       const summon = trayMenu.items.find((item) => item.label === 'Bring cat here');
@@ -914,7 +1019,7 @@ app.whenReady().then(async () => {
     }
     console.log(`PASS: ${crossing.frames} fully visible side-screen crossing/perching frames (and ${bigCrossing.frames} at 6x)`);
     if (physicalCrossing) console.log(`PASS: ${physicalCrossing.frames} measured mixed-DPI crossing/perching frames, ${physicalCrossing.checkedPixels} physical pixels checked`);
-    console.log(`PASS: climbing and leaping between stacked screens and up windows, chattering, stalking, pouncing, naps, zoomies and slow blinks, ${climbs.map((c) => `${c.frames} frames/${c.checkedPixels} pixels`).join(', ')}`);
+    console.log(`PASS: climbing and leaping between stacked screens and up windows, chattering, stalking, pouncing, patting a ball along, batting at a wiggled cursor, naps, zoomies and slow blinks, ${climbs.map((c) => `${c.frames} frames/${c.checkedPixels} pixels`).join(', ')}`);
     console.log(`PASS: ${sprites.poses} crisp animated poses at 1x/3x/6x, ${gallery.coats} distinct coats, cat files, gallery, builder, import/export, tray, mirroring, reduced motion, desktop edges, display geometry, silent behaviours, toy IPC`);
     console.log('state', JSON.stringify(state));
     console.log('captures', output);

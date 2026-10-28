@@ -188,8 +188,8 @@ function travel(goal, stop, dt) {
 }
 
 function setState(s, dur) {
-  if (s !== cat.state) { cat.route = null; cat.pounce = null; cat.leap = null; cat.daring = Math.random() < climbChance(); }
-  cat.state = s; cat.stateTime = 0; cat.dur = dur ?? rand(2, 5);
+  if (s !== cat.state) { cat.route = null; cat.pounce = null; cat.leap = null; cat.dribble = false; cat.daring = Math.random() < climbChance(); }
+  cat.state = s; cat.stateTime = 0; cat.dur = dur ?? rand(2, 5); cat.bat = null; cat.paw = null;
 }
 function jump(vy, vx = 0, then = null) { cat.vy = vy; cat.vx = vx; cat.air = true; cat.onWindow = false; setState('jump', 3); cat.landThen = then; }
 function land(dur) {
@@ -242,6 +242,69 @@ function chaseTarget() {
 // Within paw's reach of the yarn ball (it might be on a screen far above).
 const reachesYarn = (y, slack = 1) => Math.abs(y.x - cat.x) < 30 * slack * pixelCat.scale / 3 && Math.abs(y.y - cat.y) < 40 * slack * pixelCat.scale / 3;
 function swatYarn(y) { cat.swat = 0.4; y.vx = cat.dir * rand(300, 600); y.vy = -rand(200, 500); }
+
+// ---- batting ----
+// Sitting up and reaching out with a front paw: patting a ball along, or swiping at a cursor wiggled close by.
+const YARN_RADIUS = 12;
+const shoulder = (dir = cat.dir) => ({ x: cat.x + dir * 4 * pixelCat.scale, y: cat.y - 11 * pixelCat.scale });
+const withinPaw = (p, slack, dir) => { const s = shoulder(dir); return Math.hypot(p.x - s.x, p.y - s.y) <= 17 * pixelCat.scale + slack; };
+const BAT_CYCLE = 0.52; // paw up, strike, paw down
+// How excited the cursor has to make a cat before it bats at it, and how keen it is once it is.
+const batThreshold = () => [Infinity, Infinity, 0.8, 0.5, 0.2][interest()];
+const batCursorChance = () => [0, 0, 0.6, 1.2, 2.5][interest()];
+function startBat(what, swipes) {
+  setState('bat', swipes * BAT_CYCLE + 1);
+  cat.bat = { what, swipes, struck: -1 };
+}
+// Where to sit to pat the ball: a leg's length to one side of it, on the side the cat is already on if there's room.
+function batSpot(y) {
+  const f = surfaceAt(y.x, y.y), reach = 18 * pixelCat.scale + YARN_RADIUS, side = cat.x < y.x ? -1 : 1;
+  return [side, -side].map((s) => y.x + s * reach).find((x) => x >= f.x0 + pixelCat.padding && x <= f.x1 - pixelCat.padding) ?? null;
+}
+function batTarget() {
+  const y = toyOf('yarn');
+  if (cat.bat.what === 'yarn') return y && { x: y.x - cat.dir * YARN_RADIUS * 0.8, y: y.y - YARN_RADIUS };
+  return env.cursor.x >= 0 ? env.cursor : null;
+}
+function batStep() {
+  const b = cat.bat, target = b && batTarget(), s = pixelCat.scale;
+  if (b && b.what === 'cursor' && target) cat.dir = target.x >= cat.x ? 1 : -1;
+  const n = Math.floor(cat.stateTime / BAT_CYCLE), phase = cat.stateTime % BAT_CYCLE;
+  if (!target || n >= b.swipes || !withinPaw(target, b.what === 'yarn' ? YARN_RADIUS * 2 : 6 * s)) {
+    // The ball has been sent on its way (follow it and pat it again), or the game is over.
+    const yarn = b && b.what === 'yarn' && toyOf('yarn');
+    cat.batCool = rand(2, 4);
+    if (yarn) { setState('chase', rand(3, 6)); cat.dribble = Math.random() < 0.75; } else setState('sit', rand(1.5, 3));
+    return;
+  }
+  const toTarget = { x: target.x - cat.x, y: target.y - cat.y };
+  // With reduced motion the paw just reaches out, rather than flailing up and down.
+  if (reducedMotion.matches) cat.paw = toTarget;
+  else if (phase < 0.2) cat.paw = { x: cat.dir * 18 * s, y: -26 * s }; // raised beside the head
+  else if (phase < 0.34) cat.paw = toTarget;
+  else cat.paw = { x: cat.dir * 14 * s, y: -5 * s }; // back on the ground
+  if (phase < 0.2 || b.struck >= n) return;
+  b.struck = n;
+  const y = b.what === 'yarn' && toyOf('yarn');
+  if (!y) return; // a cursor can't be knocked anywhere; the cat is happy just to have got it
+  if (n < b.swipes - 1) y.vx += cat.dir * rand(30, 60); // a tentative pat first
+  else if (Math.random() < 0.25) swatYarn(y); // a big swipe
+  else { y.vx = cat.dir * rand(140, 240); y.vy = -rand(140, 260); }
+}
+// Excitement builds while the cursor darts about close by, and fades when it rests. An excited, playful cat
+// that can reach a wiggling cursor may bat at it.
+function maybeBatCursor(dt) {
+  const c = env.cursor, s = pixelCat.scale;
+  const close = c.x >= 0 && Math.hypot(c.x - cat.x, c.y - (cat.y - 20 * s)) < 200 * s / 3;
+  cat.excite = Math.max(0, Math.min(2, (cat.excite || 0) + (close && cursorSpeed > 4 ? Math.min(cursorSpeed, 40) / 20 : -0.5) * dt));
+  cat.batCool = Math.max(0, (cat.batCool || 0) - dt);
+  const ready = cat.state === 'sit' || cat.state === 'investigate' || (cat.state === 'chase' && !chaseTarget());
+  if (!ready || cat.air || cat.batCool > 0 || cursorSpeed <= 2 || cat.excite < batThreshold()) return;
+  const dir = c.x >= cat.x ? 1 : -1;
+  if (!withinPaw(c, 3 * s, dir) || Math.random() >= batCursorChance() * dt) return;
+  cat.dir = dir; cat.vx = 0;
+  startBat('cursor', 2 + Math.floor(rand(0, 3)));
+}
 
 function decide() {
   const lvl = interest();
@@ -313,6 +376,7 @@ function update(dt) {
   cat.stateTime += dt; cat.t += dt;
   const c = env.cursor, w = winTop(), u = pixelCat.scale / 3;
   cat.watch = false;
+  maybeBatCursor(dt);
 
   switch (cat.state) {
     case 'walk':
@@ -332,9 +396,19 @@ function update(dt) {
       const t = chaseTarget();
       if (t && t.why === 'yarn') {
         const y = toyOf('yarn'), dy = cat.y - y.y, gap = Math.abs(y.x - cat.x);
+        const sameSurface = !cat.air && !cat.onWindow && surfaceAt(y.x, y.y) === surfaceAt(cat.x, cat.y);
+        const settled = sameSurface && y.vy === 0 && Math.abs(y.y - cat.y) < 4;
         // A ball that has stopped rolling is prey: creep up on it before pouncing.
-        if (!cat.air && !cat.onWindow && y.vy === 0 && Math.abs(y.vx) < 20 && gap > 90 * u && gap < 320 * u &&
-          surfaceAt(y.x, y.y) === surfaceAt(cat.x, cat.y)) { setState('stalk', 8); break; }
+        if (settled && !cat.dribble && Math.abs(y.vx) < 20 && gap > 90 * u && gap < 320 * u) { setState('stalk', 8); break; }
+        // A ball close by gets patted. One just patted along is followed, staying behind it, and patted again.
+        const spot = sameSurface && (cat.dribble ? gap < 400 * u : settled && Math.abs(y.vx) < 60 && gap < 90 * u) ? batSpot(y) : null;
+        if (spot !== null) {
+          if (moveToward(spot, Math.max(3, speed() * dt)) && settled && Math.abs(y.vx) < 60) {
+            cat.dir = y.x >= cat.x ? 1 : -1;
+            startBat('yarn', 1 + Math.floor(rand(0, 2.2)));
+          }
+          break;
+        }
         if (!travel(y, 30, dt)) break;
         if (reachesYarn(y)) { if (Math.random() < 0.05) { swatYarn(y); setState('chase', 6); } }
         // Leaps at a ball bouncing just overhead.
@@ -410,6 +484,7 @@ function update(dt) {
       break;
     }
     case 'climb': break;
+    case 'bat': cat.vx = 0; batStep(); break;
     case 'settle': { // round and round, then kneading the spot before lying down
       cat.vx = 0;
       const turns = Math.min(3, Math.floor(cat.stateTime / 0.35));
@@ -441,7 +516,8 @@ function lookAround(dt) {
   const yarn = toyOf('yarn'), cursor = env.cursor.x >= 0 ? env.cursor : null;
   const near = cursor && Math.hypot(cursor.x - cat.x, cursor.y - (cat.y - 20 * u)) < 300 * u;
   let target = null;
-  if (hunting) target = yarn && !toyOf('laser') ? { x: yarn.x, y: yarn.y - 12 } : cursor;
+  if (cat.state === 'bat' && cat.bat) target = batTarget();
+  else if (hunting) target = yarn && !toyOf('laser') ? { x: yarn.x, y: yarn.y - 12 } : cursor;
   else if (cat.state === 'toBowl' || cat.state === 'eat') target = toyOf('food');
   else if (cat.state === 'toCup') target = toyOf('cup');
   else if (cat.state === 'investigate' || (cursorSpeed > 2 && cursor && Math.hypot(cursor.x - cat.x, cursor.y - cat.y) < 800 * u)) target = cursor;
@@ -533,9 +609,24 @@ function draw(dt) {
   pixelCat.draw(ctx, cat);
 }
 
+// ---- right-click menu ----
+// The overlay lets clicks through everywhere except over the cat itself, which can be right-clicked for the menu.
+// While the pointer is over the cat the overlay gets mouse events, so it can tell at once when the pointer leaves.
+let pointer = null, overCat = false;
+addEventListener('mousemove', (e) => { pointer = { x: e.clientX, y: e.clientY, at: performance.now() }; });
+addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (pixelCat.hit(cat, e.clientX, e.clientY)) window.catApi.showCatMenu();
+});
+function updateHover() {
+  const p = pointer && performance.now() - pointer.at < 100 ? pointer : env.cursor;
+  const over = p.x >= 0 && pixelCat.hit(cat, p.x, p.y);
+  if (over !== overCat) { overCat = over; window.catApi.setCatHover(over); }
+}
+
 let last = performance.now();
 (function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (canvas.width !== env.width || canvas.height !== env.height) { canvas.width = env.width; canvas.height = env.height; }
-  update(dt); draw(dt); requestAnimationFrame(loop);
+  update(dt); draw(dt); updateHover(); requestAnimationFrame(loop);
 })(last);

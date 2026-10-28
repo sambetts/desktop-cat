@@ -236,8 +236,26 @@ const pixelCat = (() => {
         : seated && t % 7 < 1 ? [0, 1, 0, -1][Math.floor(t * 4) % 4] : 0;
     const kneading = cat.state === 'settle' && since > 1.2, knead = kneading && Math.floor(t * 4) % 2 === 0;
     const swatting = cat.swat > 0 && !climbing, reach = cat.swat < 0.2 ? 1 : 0;
+    const batting = cat.state === 'bat' && !!cat.paw && seated && !swatting;
     const part = (name, x, y) => ctx.drawImage(sprites[name], x, y);
     const rect = (color, x, y, w = 1, h = 1) => { ctx.fillStyle = palette[color]; ctx.fillRect(x, y, w, h); };
+    // A front leg reaching from the shoulder (sx, sy) to a paw at (px, py); it runs into the chest without an outline there.
+    const limb = (sx, sy, px, py) => {
+      const fill = new Set(), cell = (x, y) => `${x},${y}`, n = Math.max(Math.abs(px - sx), Math.abs(py - sy), 1);
+      for (let i = 0; i <= n; i++) {
+        const x = Math.round(sx + (px - sx) * i / n), y = Math.round(sy + (py - sy) * i / n);
+        for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) fill.add(cell(x + a, y + b));
+      }
+      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) if (Math.abs(a) + Math.abs(b) < 4) fill.add(cell(px + a, py + b));
+      const d = Math.hypot(px - sx, py - sy) || 1, ux = (px - sx) / d, uy = (py - sy) / d;
+      for (const c of fill) {
+        const [x, y] = c.split(',').map(Number);
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (!fill.has(cell(x + a, y + b)) && (x + a - sx) * ux + (y + b - sy) * uy > 1.5) rect('x', x + a, y + b);
+        }
+      }
+      for (const c of fill) { const [x, y] = c.split(',').map(Number); rect('c', x, y); }
+    };
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     // Climbing turns the body and walk cycle on their side: feet against a wall in the facing direction.
@@ -268,9 +286,19 @@ const pixelCat = (() => {
     } else if (seated) {
       part('sit', -8, -16);
       part('frontLeg', -2, knead ? -12 : -10); // kneading: front paws take turns pressing down
-      if (!licking && !swatting) part('frontLeg', 2, kneading && !knead ? -12 : -10);
+      if (!licking && !swatting && !batting) part('frontLeg', 2, kneading && !knead ? -12 : -10);
       part('tailFront', -12, -6);
       part('tailTip', 8 + wag, -7);
+      if (batting) {
+        // Batting: the paw (cat.paw, from the feet in screen pixels) reaches as far as the leg allows. The leg goes
+        // behind the head, so a paw raised high appears beside it, never across the face, and stays in the box.
+        const sx = 4, sy = -11;
+        let dx = cat.paw.x * cat.dir / scale - sx, dy = cat.paw.y / scale - sy;
+        const length = Math.hypot(dx, dy), longest = 17;
+        if (length > longest) { dx *= longest / length; dy *= longest / length; }
+        const py = Math.round(Math.max(-33, Math.min(-4, sy + dy)));
+        limb(sx, sy, Math.round(Math.max(py < -15 ? 18 : 13, Math.min(24, sx + dx))), py);
+      }
       [hx, hy] = licking ? [-10, -33] : [-11, -34]; // washing: head tilted down into the raised paw
       swatAt = [3, -14];
     } else if (stretch) {
@@ -307,7 +335,7 @@ const pixelCat = (() => {
     const lidded = blink > 0 || loafing || kneading || cat.state === 'smug';
     // Eyes follow whatever has the cat's attention; pupils go wide for the hunt.
     const look = cat.look, ahead = !look || look.x * cat.dir >= 0, up = !!look && look.y < -50 * scale;
-    const wide = hunting || (cat.state === 'chase' && airborne);
+    const wide = hunting || batting || (cat.state === 'chase' && airborne);
     for (const ex of [hx + 5, hx + 17]) {
       const ey = hy + 8;
       if (closed) { // a contented upside-down smile
@@ -370,12 +398,27 @@ const pixelCat = (() => {
     return { left: x - 28 * scale, right: x + 28 * scale, top: y - 38 * scale, bottom: y };
   }
 
+  // Whether the cat has an opaque pixel at (x, y). Only that pixel is drawn, into a 1×1 canvas.
+  const probe = document.createElement('canvas');
+  probe.width = probe.height = 1;
+  const probeContext = probe.getContext('2d', { willReadFrequently: true });
+  function hit(cat, x, y) {
+    const b = box(cat);
+    if (!(x >= b.left && x < b.right && y >= b.top && y < b.bottom)) return false;
+    probeContext.setTransform(1, 0, 0, 1, 0, 0);
+    probeContext.clearRect(0, 0, 1, 1);
+    probeContext.setTransform(1, 0, 0, 1, -Math.floor(x), -Math.floor(y));
+    render(probeContext, cat, current, size);
+    return probeContext.getImageData(0, 0, 1, 1).data[3] > 0;
+  }
+
   return {
     draw: (ctx, cat) => render(ctx, cat, current, size),
     drawCoat: (ctx, cat, coat, scale = size) => render(ctx, cat, coatSprites(coat), scale),
     setCoat: (coat) => { current = coatSprites(coat); },
     setScale: (scale) => { size = Math.max(1, Math.min(6, Math.round(scale) || 3)); },
     box,
+    hit,
     get scale() { return size; },
     get padding() { return 28 * size; },
     get height() { return 38 * size; },

@@ -130,7 +130,7 @@ function createWindow() {
   // Windows can cap constructor dimensions to one display's work area.
   win.setBounds(bounds);
   win.setAlwaysOnTop(true, 'screen-saver');
-  win.setIgnoreMouseEvents(true); // click-through; the cat reads the cursor by polling
+  win.setIgnoreMouseEvents(true); // click-through except over the cat; the cat reads the cursor by polling
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
@@ -149,10 +149,11 @@ function summonCat() {
   win.webContents.send('summon', { x: area.x + area.width / 2, y: Math.floor(area.y + area.height) });
 }
 
-function buildMenu() {
+// The tray menu; right-clicking the cat shows the same menu, less "Bring cat here".
+function menuTemplate({ summon = true } = {}) {
   const radio = (label, checked, patch) => ({ label: label.replace(/&/g, '&&'), type: 'radio', checked, click: () => applySettings(patch) });
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Bring cat here', click: summonCat },
+  return [
+    ...(summon ? [{ label: 'Bring cat here', click: summonCat }] : []),
     { label: 'Cat', submenu: coats.all(settings.customCats).map((c) => radio(c.name, settings.coat === c.id, { coat: c.id })) },
     { label: 'Size', submenu: SIZES.map((label, i) => radio(label, settings.scale === i + 1, { scale: i + 1 })) },
     { type: 'separator' },
@@ -165,7 +166,21 @@ function buildMenu() {
     { type: 'separator' },
     { label: 'Settings…', click: openSettings },
     { label: 'Quit', role: 'quit' },
-  ]));
+  ];
+}
+function buildMenu() { tray.setContextMenu(Menu.buildFromTemplate(menuTemplate())); }
+
+// The overlay is click-through except while the pointer is over the cat, so the cat can be right-clicked.
+function registerOverlayIpc() {
+  const fromOverlay = (event) => win && !win.isDestroyed() && event.sender === win.webContents;
+  ipcMain.on('cat-hover', (event, over) => { if (fromOverlay(event)) win.setIgnoreMouseEvents(over !== true); });
+  ipcMain.on('cat-menu', (event) => {
+    if (fromOverlay(event)) Menu.buildFromTemplate(menuTemplate({ summon: false })).popup({ window: win });
+  });
+  // A reloaded or crashed page can't say the pointer has left the cat.
+  const clickThrough = () => { if (!win.isDestroyed()) win.setIgnoreMouseEvents(true); };
+  win.webContents.on('did-start-loading', clickThrough);
+  win.webContents.on('render-process-gone', clickThrough);
 }
 
 app.whenReady().then(() => {
@@ -181,6 +196,7 @@ app.whenReady().then(() => {
     sendEnvironment();
   });
   registerCatIpc();
+  registerOverlayIpc();
 
   const reposition = () => {
     if (win.isDestroyed()) return;
