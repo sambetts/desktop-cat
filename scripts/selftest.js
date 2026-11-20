@@ -94,12 +94,12 @@ function checkSprites(scale = 3) {
   }
   if (!mirrored) throw new Error('Facing left must mirror the sprite without changing its pixels');
   if (!same(right, render({ x: 36 * s + 0.25, y: 50 * s + 0.25 }))) throw new Error('Fractional movement must snap to whole pixels');
-  if (same(render({ state: 'walk', vx: 60 }), render({ state: 'walk', vx: 60, t: 0.125 }))) throw new Error('Walking must animate');
+  if (same(render({ state: 'walk', vx: 60 * s / 3 }), render({ state: 'walk', vx: 60 * s / 3, t: 0.125 }))) throw new Error('Walking must animate');
   const climb = { state: 'climb', vy: -60, x: 53 * s, y: 52 * s };
   if (same(render(climb), render({ ...climb, t: 0.125 }))) throw new Error('Climbing must animate');
 
   const poses = [
-    ['Sitting', {}], ['Walking', { state: 'walk', vx: 60 }], ['Next step', { state: 'walk', vx: 60, t: 0.125 }],
+    ['Sitting', {}], ['Walking', { state: 'walk', vx: 60 * s / 3 }], ['Next step', { state: 'walk', vx: 60 * s / 3, t: 0.125 }],
     ['Jumping', { state: 'jump', air: true, vy: -200 }], ['Stretching', { state: 'stretch' }],
     ['Grooming', { state: 'lick' }], ['Sleeping', { state: 'sleep' }], ['Smug', { state: 'smug' }],
     ['Swatting', { swat: 0.4 }], ['Eating', { state: 'eat' }], ['Climbing', climb],
@@ -108,13 +108,19 @@ function checkSprites(scale = 3) {
     ['Slow blink', { blink: 0.7 }], ['Chattering', { watch: true, t: 0.125, look: { x: 0, y: -400 } }],
     ['Watching', { look: { x: -200, y: -300 } }],
     ['Batting', { state: 'bat', paw: { x: 20 * s, y: -10 * s } }], ['Paw raised', { state: 'bat', paw: { x: 18 * s, y: -26 * s } }],
+    ['Trotting', { state: 'walk', vx: 160 * s / 3 }],
+    ['Galloping', { state: 'zoom', vx: 400 * s / 3 }],
+    ['Braking', { state: 'brake', vx: 100 * s / 3, brake: 0.1 }],
+    ['Soft landing', { state: 'land' }], ['Crab-hop', { state: 'crab' }],
+    ['Flopped', { state: 'flop', stateTime: 0.2, dur: 4 }],
+    ['Belly-up', { state: 'flop', stateTime: 1, dur: 4 }],
+    ['Bunny-kicking', { state: 'bunny', stateTime: 1 }],
   ];
   const atlas = document.createElement('canvas');
   atlas.width = image.width * 5; atlas.height = image.height * Math.ceil(poses.length / 5);
   const sheet = atlas.getContext('2d');
   const unique = new Set();
-  for (const [i, [label, pose]] of poses.entries()) {
-    const data = render(pose);
+  const validate = (label, pose, data) => {
     let drawn = 0;
     for (let p = 3; p < data.length; p += 4) {
       if (data[p] !== 0 && data[p] !== 255) throw new Error(`${label}: sprite edges must not be blurred`);
@@ -149,6 +155,10 @@ function checkSprites(scale = 3) {
         }
       }
     }
+  };
+  for (const [i, [label, pose]] of poses.entries()) {
+    const data = render(pose);
+    validate(label, pose, data);
     unique.add(image.toDataURL());
     const x = i % 5 * image.width, y = Math.floor(i / 5) * image.height;
     sheet.fillStyle = i % 2 ? '#202735' : '#f5eee1'; sheet.fillRect(x, y, image.width, image.height);
@@ -156,6 +166,12 @@ function checkSprites(scale = 3) {
     sheet.drawImage(image, x, y);
   }
   if (unique.size !== poses.length) throw new Error('Behaviour poses must be visually distinct');
+  for (const pose of poses.slice(-8).map(([, pose]) => pose)) {
+    for (const dir of [-1, 1]) for (const t of [0, 0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.4375, 0.5, 0.75, 1, 1.5, 3.8]) {
+      const frame = { ...pose, dir, t, stateTime: t };
+      validate(`${pose.state} at ${t}s facing ${dir}`, frame, render(frame));
+    }
+  }
   return { poses: poses.length, png: atlas.toDataURL('image/png').split(',')[1] };
 }
 
@@ -204,12 +220,151 @@ function checkEdges() {
     env = { ...env, active: null };
     for (const dir of [-1, 1]) {
       const start = dir < 0 ? pixelCat.padding : env.width - pixelCat.padding;
-      Object.assign(cat, { x: start, y: floorAt(start), state: 'walk', stateTime: 0, dur: 20, dir, vx: 0, vy: 0, air: false, onWindow: false });
-      for (let i = 0; i < 3; i++) update(1 / 60);
+      Object.assign(cat, { x: start, y: floorAt(start), state: 'walk', stateTime: 0, dur: 20, dir, vx: 0, vy: 0, air: false, onWindow: false,
+        heading: null, turn: 0, brake: 0, landing: 0 });
+      for (let i = 0; i < 15; i++) update(1 / 60);
       if (cat.dir !== -dir || (cat.x - start) * dir >= 0) throw new Error('Cat must turn and walk away from either desktop edge');
     }
     return true;
   } finally { Object.assign(cat, saved.cat); env = saved.env; }
+}
+
+function checkActions(projection) {
+  const saved = { cat: { ...cat }, env, settings, toys, random: Math.random, cursorSpeed };
+  const s = pixelCat.scale, step = 0.025;
+  const floors = projection ? env.floors : [
+    { primary: true, x0: 600, x1: 2200, top: 400, y: 1300 },
+    { x0: 0, x1: 600, top: 400, y: 1000 },
+    { x0: 2200, x1: 2800, top: 400, y: 1000 },
+    { x0: 1000, x1: 1800, top: 0, y: 350 },
+  ].map((f) => ({ ...f, screen: { x0: f.x0, x1: f.x1, top: f.top, bottom: f.y + 50 } }));
+  const primary = floors.find((f) => f.primary), middle = (primary.x0 + primary.x1) / 2;
+  const image = document.createElement('canvas'), pixels = image.getContext('2d', { willReadFrequently: true });
+  let frames = 0, png;
+  const visible = () => {
+    const transit = cat.air || cat.state === 'climb', box = pixelCat.box(cat);
+    if (!covered(box, floors.map(transit ? screenArea : workArea))) throw new Error(`${cat.state}: whole sprite left the monitor union`);
+    if (cat.heldYarn) {
+      const y = cat.heldYarn;
+      if (!covered({ left: y.x - 12, right: y.x + 12, top: y.y - 24, bottom: y.y }, floors.map(workArea))) throw new Error('Held yarn left the work areas');
+    }
+    if (projection) {
+      image.width = box.right - box.left + 2; image.height = box.bottom - box.top + 2;
+      pixelCat.draw(pixels, { ...cat, x: Math.round(cat.x) - box.left + 1, y: Math.round(cat.y) - box.top + 1 });
+      const data = pixels.getImageData(0, 0, image.width, image.height).data;
+      const areas = transit ? projection.screens : projection.areas;
+      for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+        if (!data[(y * image.width + x) * 4 + 3]) continue;
+        const gx = box.left + x - 1, gy = box.top + y - 1;
+        for (let py = Math.floor(projection.origin.y + gy * projection.scale); py < Math.ceil(projection.origin.y + (gy + 1) * projection.scale); py++) {
+          for (let px = Math.floor(projection.origin.x + gx * projection.scale); px < Math.ceil(projection.origin.x + (gx + 1) * projection.scale); px++) {
+            if (!areas.some((a) => px >= a.x && px < a.x + a.width && py >= a.y && py < a.y + a.height)) throw new Error(`${cat.state}: rendered action pixel is outside the physical displays`);
+          }
+        }
+      }
+    }
+    frames++;
+  };
+  const pose = (x = middle, y = primary.y, extra = {}) => {
+    Object.assign(cat, { x, y, dir: 1, vx: 0, vy: 0, state: 'sit', stateTime: 0, dur: 60, air: false, onWindow: false, ignoreWin: false,
+      swat: 0, pounce: null, leap: null, climb: null, heading: null, turn: 0, brake: 0, landing: 0, actionCool: 0, crab: null,
+      heldYarn: null, grab: null, afterLand: null, bat: null, paw: null, batCool: 0, excite: 0, dribble: false, ...extra });
+  };
+  const advance = (seconds) => {
+    const states = new Set();
+    for (let t = 0; t < seconds; t += step) { update(step); visible(); states.add(cat.state); }
+    return states;
+  };
+  try {
+    env = { ...env, floors, width: projection ? env.width : 2800, height: projection ? env.height : 1350,
+      active: null, cursor: { x: -1, y: -1 }, typing: false, idle: 0, hour: 12 };
+    settings = { ...settings, interest: 4, nightSleep: false }; toys = []; cursorSpeed = 0; Math.random = () => 0.99;
+    pose(middle, primary.y, { state: 'walk' });
+    update(step);
+    const first = cat.vx;
+    if (!(first > 0 && first < speed() * 0.6)) throw new Error('Walking must accelerate rather than start at full speed');
+    advance(0.15);
+    if (cat.vx <= first) throw new Error('Walking must build speed');
+    cat.dur = cat.stateTime;
+    update(step);
+    if (cat.state !== 'brake' || cat.vx <= 0) throw new Error('A walk must brake before stopping');
+    advance(0.3);
+    if (cat.vx !== 0) throw new Error('Braking must finish without drifting');
+
+    pose(middle, primary.y, { state: 'explore', vx: speed(), goal: { x: middle - 100 * s, y: primary.y } });
+    update(step);
+    if (cat.vx <= 0 || cat.vx >= speed() || cat.dir !== 1 || cat.brake <= 0) throw new Error('A turn must brake before reversing direction');
+    advance(0.5);
+    if (cat.vx >= 0 || cat.dir !== -1) throw new Error('A braked cat must finish turning and move the other way');
+
+    pose(middle, primary.y - 40, { state: 'jump', air: true, vy: 200, landThen: null });
+    if (!advance(0.2).has('land')) throw new Error('A jump must land in a recovery crouch');
+    advance(0.3);
+    if (cat.state !== 'sit' || cat.y !== primary.y) throw new Error('Landing must resume the intended action');
+
+    env.active = { x: middle - 120, y: primary.y - 160, width: 240, height: 300 };
+    pose(middle + 105, env.active.y, { state: 'investigate', onWindow: true });
+    env.cursor = { x: middle + 400, y: primary.y };
+    advance(0.5);
+    if (cat.onWindow || cat.x <= middle + 110) throw new Error('Targeted movement must still be able to leave a window, unlike idle pacing');
+    env.active = null; env.cursor = { x: -1, y: -1 };
+
+    for (const f of floors.filter((f) => f.x1 - f.x0 > 2 * pixelCat.padding + 36 * s && f.y - f.top > pixelCat.height + 8 * s)) {
+      for (const dir of [-1, 1]) {
+        pose(dir < 0 ? Math.ceil(f.x0) + pixelCat.padding : Math.floor(f.x1) - pixelCat.padding, f.y, { dir });
+        if (!startCrab(dir)) throw new Error('A crab-hop at an outer edge must choose the safe inward direction');
+        const start = cat.x, states = advance(1.35);
+        if (Math.abs(cat.x - start) < 8 * s || cat.air || !states.has('crab')) throw new Error('A crab-hop must launch, move sideways and land');
+      }
+    }
+    pose();
+    if (!startFlop()) throw new Error('A grounded cat must be able to flop');
+    const x = cat.x, flops = advance(cat.dur + 0.3);
+    if (!flops.has('flop') || !flops.has('land') || cat.x !== x || cat.air || cat.state !== 'sit') throw new Error('Flopping must roll and get up without drifting');
+
+    pose(middle, primary.y, { state: 'chase' });
+    const yarn = { kind: 'yarn', x: middle + 18 * s + 12, y: primary.y, vx: 0, vy: 0, idle: 24.9 };
+    toys = [yarn]; Math.random = () => 0.01;
+    update(step);
+    if (cat.state !== 'bunny' || cat.heldYarn !== yarn) throw new Error('A playful cat must sometimes grab nearby yarn instead of batting it');
+    Math.random = () => 0.99;
+    advance(0.5);
+    if (!toys.includes(yarn) || yarn.vx !== 0 || yarn.vy !== 0 || yarn.idle !== 0 || Math.abs(yarn.x - cat.x - 10 * s) > 0.01) throw new Error('Bunny-kicking must hold a live toy against the cat, without gravity or idle expiry');
+    if (projection) {
+      draw(0);
+      const crop = document.createElement('canvas');
+      crop.width = 72 * s; crop.height = 54 * s;
+      const shot = crop.getContext('2d');
+      shot.fillStyle = '#f5eee1'; shot.fillRect(0, 0, crop.width, crop.height);
+      shot.drawImage(canvas, Math.round(cat.x) - 36 * s, Math.round(cat.y) - 50 * s, crop.width, crop.height, 0, 0, crop.width, crop.height);
+      png = crop.toDataURL('image/png').split(',')[1];
+    }
+    cat.grab = { x: primary.x0 - 20, y: primary.y }; cat.stateTime = 0;
+    updateToys(0);
+    visible();
+    if (yarn.x !== cat.x + cat.dir * 10 * s) throw new Error('A repositioned cat must not pull held yarn through a display gap');
+    advance(cat.dur);
+    if (cat.heldYarn || cat.state !== 'lick' || !toys.includes(yarn)) throw new Error('Bunny-kicking must release the ball and finish with a wash');
+
+    pose();
+    yarn.x = middle + 10 * s; yarn.y = primary.y; yarn.vx = 0; yarn.vy = 0;
+    if (!startFlop(yarn)) throw new Error('Test yarn must be within reach');
+    advance(0.3);
+    placeCat();
+    if (cat.heldYarn || cat.grab || cat.crab || yarn.vx || yarn.vy) throw new Error('Summoning or a layout reset must release held yarn and cancel physical actions');
+
+    pose(middle, primary.y, { onWindow: true });
+    if (startCrab() || startFlop()) throw new Error('Floor antics must not start on a window ledge');
+    pose();
+    settings = { ...settings, interest: 1 };
+    if (startCrab() || startFlop(yarn)) throw new Error('Aloof cats must not crab-hop or wrestle toys');
+
+    env = { ...env, floors: [{ x0: 0, x1: 2 * pixelCat.padding + 4 * s, top: 0, y: 100 * s }] };
+    pose(pixelCat.padding + 2 * s, 100 * s);
+    settings = { ...settings, interest: 4 };
+    if (startCrab()) throw new Error('A crab-hop must be declined when there is no room for the whole arc and landing');
+    return { frames, png };
+  } finally { Object.assign(cat, saved.cat); env = saved.env; settings = saved.settings; toys = saved.toys; Math.random = saved.random; cursorSpeed = saved.cursorSpeed; }
 }
 
 function checkDisplayGeometry() {
@@ -276,7 +431,7 @@ function checkMonitorCrossings(projection) {
   };
   const pose = (x, y, dir, extra = {}) => Object.assign(cat, {
     x, y, dir, vx: 0, vy: 0, state: 'walk', stateTime: 0, dur: 20,
-    air: false, onWindow: false, ignoreWin: false, swat: 0, ...extra,
+    air: false, onWindow: false, ignoreWin: false, swat: 0, heading: null, turn: 0, brake: 0, landing: 0, ...extra,
   });
   try {
     env = { ...env, floors, width: projection ? env.width : 2500, height: projection ? env.height : 1350, active: null };
@@ -321,8 +476,8 @@ function checkMonitorCrossings(projection) {
       env.active = { x: x - 120, y, width: 240, height: 300 };
       pose(x + 109, y, 1, { state: 'helpType', onWindow: true });
       const previousX = cat.x;
-      for (let step = 0; step < 3; step++) { update(1 / 60); visible(`Pacing on monitor ${id}`); }
-      if (cat.x >= previousX || cat.dir !== -1 || !cat.onWindow) throw new Error('Pacing must turn before walking off the window');
+      for (let step = 0; step < 15; step++) { update(1 / 60); visible(`Pacing on monitor ${id}`); }
+      if (cat.x >= previousX || cat.dir !== -1 || !cat.onWindow) throw new Error(`Pacing must turn before walking off the window (${JSON.stringify({ x: cat.x, previousX, dir: cat.dir, onWindow: cat.onWindow, heading: cat.heading, turn: cat.turn, landing: cat.landing })})`);
       env.active = null;
     }
     const atlas = document.createElement('canvas'), width = 560, height = Math.max(300, primary.y - Math.min(...floors.filter((f) => f.id === 2 || f.id === 3).map((f) => f.y)) + pixelCat.height + 72);
@@ -419,7 +574,8 @@ function checkClimbing(projection) {
   };
   const pose = (x, y, state, extra = {}) => {
     Object.assign(cat, { x, y, vx: 0, vy: 0, dir: 1, state, stateTime: 0, dur: 60, air: false, onWindow: false, ignoreWin: false, swat: 0, climb: null, landThen: null,
-      pounce: null, leap: null, blink: 0, calm: 0, look: null, bat: null, paw: null, batCool: 0, excite: 0, dribble: false, ...extra });
+      pounce: null, leap: null, blink: 0, calm: 0, look: null, bat: null, paw: null, batCool: 0, excite: 0, dribble: false,
+      heading: null, turn: 0, brake: 0, landing: 0, actionCool: 0, heldYarn: null, crab: null, afterLand: null, ...extra });
     previousBox = null;
   };
   const run = (label, seconds, done, each = () => {}) => {
@@ -858,6 +1014,25 @@ app.whenReady().then(async () => {
     })`);
     assert.equal(initial.x, (initial.home.x0 + initial.home.x1) / 2, 'Cat must start on the primary monitor');
     assert.equal(initial.y, initial.home.y);
+    const content = overlay.getContentBounds(), zoom = overlay.webContents.getZoomFactor();
+    const physical = process.platform === 'win32' ? screen.dipToScreenRect(overlay, content) : content;
+    const renderer = await overlay.webContents.executeJavaScript(`(() => {
+      const css = canvas.getBoundingClientRect();
+      return { width: innerWidth, height: innerHeight, dpr: devicePixelRatio,
+        canvas: { width: canvas.width, height: canvas.height, cssWidth: css.width, cssHeight: css.height } };
+    })()`);
+    assert.ok(Math.abs(renderer.width - content.width / zoom) <= 1 && Math.abs(renderer.height - content.height / zoom) <= 1, 'Renderer dimensions must match the overlay content and zoom');
+    assert.deepEqual(renderer.canvas, { width: renderer.width, height: renderer.height, cssWidth: renderer.width, cssHeight: renderer.height }, 'Canvas CSS and backing dimensions must use the same overlay-local coordinate space');
+    const nativeRect = (r) => process.platform === 'win32' ? screen.dipToScreenRect(null, r) : r;
+    const measuredProjection = {
+      origin: { x: physical.x, y: physical.y }, scale: physical.width / renderer.width,
+      areas: screen.getAllDisplays().map((d) => nativeRect(d.workArea)),
+      screens: screen.getAllDisplays().map((d) => nativeRect(d.bounds)),
+    };
+    console.log(multiMonitor ? 'simulated overlay geometry' : 'native overlay geometry', JSON.stringify({
+      bounds: overlay.getBounds(), content, physical, zoom, renderer,
+      displays: screen.getAllDisplays().map(({ bounds, workArea, scaleFactor }) => ({ bounds, workArea, scaleFactor })),
+    }));
     if (multiMonitor) {
       const bounds = mixedDpi ? { x: -720, y: -720, width: 4000, height: 2160 } : { x: -450, y: -450, width: 2500, height: 1350 };
       assert.deepEqual(overlay.getBounds(), bounds, 'Overlay must cover the physical desktop without single-screen capping');
@@ -890,7 +1065,7 @@ app.whenReady().then(async () => {
       const p = c.getContext('2d'), base = { x: 108, y: 150, t: 0, state: 'walk', vx: 60, vy: 0, dir: 1, air: false, swat: 0 };
       const still = (pose) => {
         p.clearRect(0, 0, c.width, c.height); pixelCat.draw(p, pose); const first = c.toDataURL();
-        p.clearRect(0, 0, c.width, c.height); pixelCat.draw(p, { ...pose, t: 0.125 });
+        p.clearRect(0, 0, c.width, c.height); pixelCat.draw(p, { ...pose, t: 0.125, stateTime: 1 });
         return first === c.toDataURL();
       };
       const shot = (pose) => { p.clearRect(0, 0, c.width, c.height); pixelCat.draw(p, pose); return c.toDataURL(); };
@@ -902,14 +1077,29 @@ app.whenReady().then(async () => {
         Object.assign(cat, { state: 'bat', dir: 1, bat: { what: 'cursor', swipes: 3, struck: -1 } });
         for (let i = 0; i < 40; i++) { cat.stateTime = i * 0.025; batStep(); paws.add(JSON.stringify(cat.paw)); }
       } finally { Object.assign(cat, saved.cat); env = saved.env; }
-      return [still(base), still({ ...base, state: 'climb', vx: 0, vy: -60, x: 159, y: 156 }), still({ ...base, state: 'ready', vx: 0 }), shot({ ...sitting, blink: 0.7 }) === shot(sitting), paws.size];
-    })()`), [true, true, true, true, 1], 'Reduced motion must freeze decorative sprite animation, climbing, wiggling, blinking and batting included');
+      return [still(base), still({ ...base, state: 'climb', vx: 0, vy: -60, x: 159, y: 156 }), still({ ...base, state: 'ready', vx: 0 }), shot({ ...sitting, blink: 0.7 }) === shot(sitting), paws.size,
+        still({ ...sitting, state: 'crab' }), still({ ...sitting, state: 'flop', stateTime: 0, dur: 4 }), still({ ...sitting, state: 'bunny' })];
+    })()`), [true, true, true, true, 1, true, true, true], 'Reduced motion must freeze decorative sprite animation, including crab poses, rolling and bunny-kicks');
+    assert.equal(await overlay.webContents.executeJavaScript(`(() => {
+      const saved = { cat: { ...cat }, settings };
+      try { settings = { ...settings, interest: 4 }; placeCat(); return startCrab(); }
+      finally { Object.assign(cat, saved.cat); settings = saved.settings; }
+    })()`), false, 'Reduced motion must prevent new crab-hops');
     // Behaviour checks and their snapshots run with full motion, whatever this PC's accessibility setting is.
     await overlay.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     stage = 'behaviour checks';
     assert.equal(await overlay.webContents.executeJavaScript(`(${checkSilence.toString()})()`), 0);
     assert.equal(await overlay.webContents.executeJavaScript(`(${checkEdges.toString()})()`), true);
     assert.equal(await overlay.webContents.executeJavaScript(`(${checkDisplayGeometry.toString()})()`), true);
+    stage = 'first-batch actions';
+    const actions = [];
+    for (const size of [1, 3, 6]) {
+      const result = await overlay.webContents.executeJavaScript(atScale(size, checkActions));
+      assert.equal(result.error, undefined, `${size}x actions: ${result.error}`);
+      actions.push(result.frames);
+    }
+    const measuredActions = await overlay.webContents.executeJavaScript(atScale(3, checkActions, measuredProjection));
+    assert.equal(measuredActions.error, undefined, `Measured overlay actions: ${measuredActions.error}`);
     stage = 'side-screen replay';
     const crossing = await overlay.webContents.executeJavaScript(`(() => {
       try { return (${checkMonitorCrossings.toString()})(); } catch (error) { return { error: error.message }; }
@@ -973,6 +1163,7 @@ app.whenReady().then(async () => {
     }
     stage = 'overlay capture';
     fs.writeFileSync(path.join(output, 'cat-sprites.png'), Buffer.from(sprites.png, 'base64'));
+    fs.writeFileSync(path.join(output, 'cat-actions.png'), Buffer.from(measuredActions.png, 'base64'));
     fs.writeFileSync(path.join(output, 'cat-gallery.png'), Buffer.from(gallery.png, 'base64'));
     fs.writeFileSync(path.join(output, 'cat-climbing.png'), Buffer.from(climbs[0].png, 'base64'));
     if (climbs[2]) fs.writeFileSync(path.join(output, 'cat-climbing-desktop.png'), Buffer.from(climbs[2].png, 'base64'));
@@ -1018,6 +1209,7 @@ app.whenReady().then(async () => {
       console.log('PASS: four-screen physical overlay bounds, primary spawn, cursor and tray summoning on all screens, DPI changes, monitor removal');
     }
     console.log(`PASS: ${crossing.frames} fully visible side-screen crossing/perching frames (and ${bigCrossing.frames} at 6x)`);
+    console.log(`PASS: acceleration, braking, turns, soft landings, bounded crab-hops, rolling, held yarn and bunny-kicks: ${actions.join('/')} frames at 1x/3x/6x, ${measuredActions.frames} physically projected overlay frames`);
     if (physicalCrossing) console.log(`PASS: ${physicalCrossing.frames} measured mixed-DPI crossing/perching frames, ${physicalCrossing.checkedPixels} physical pixels checked`);
     console.log(`PASS: climbing and leaping between stacked screens and up windows, chattering, stalking, pouncing, patting a ball along, batting at a wiggled cursor, naps, zoomies and slow blinks, ${climbs.map((c) => `${c.frames} frames/${c.checkedPixels} pixels`).join(', ')}`);
     console.log(`PASS: ${sprites.poses} crisp animated poses at 1x/3x/6x, ${gallery.coats} distinct coats, cat files, gallery, builder, import/export, tray, mirroring, reduced motion, desktop edges, display geometry, silent behaviours, toy IPC`);

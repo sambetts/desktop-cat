@@ -39,7 +39,8 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 // ---- world ----
 // look: where the cat's attention is, relative to it. watch: prey it can't reach. blink: a slow blink in progress.
 const cat = { x: 300, y: 0, vx: 0, vy: 0, dir: 1, state: 'sit', t: 0, stateTime: 0, dur: 3, onWindow: false, air: false, swat: 0, daring: false, climb: null, route: null,
-  look: null, watch: false, blink: 0, calm: 0, pounce: null, leap: null };
+  look: null, watch: false, blink: 0, calm: 0, pounce: null, leap: null,
+  heading: null, turn: 0, brake: 0, landing: 0, actionCool: 0, crab: null, heldYarn: null, grab: null, afterLand: null };
 let toys = []; // yarn, bowl, cup, laser
 const surfaceAt = (x, y = cat.y) => {
   const spanning = env.floors.filter((f) => x >= f.x0 && x < f.x1);
@@ -89,7 +90,7 @@ function keepCatVisible() {
   }));
   const nearest = positions.sort((a, b) => Math.hypot(a.x - cat.x, a.y - cat.y) - Math.hypot(b.x - cat.x, b.y - cat.y))[0];
   if (!nearest) return;
-  if (nearest.x !== cat.x && (cat.state === 'walk' || cat.state === 'zoom')) cat.dir *= -1;
+  if (nearest.x !== cat.x && (cat.state === 'walk' || cat.state === 'zoom')) { cat.dir *= -1; cat.heading = cat.dir; }
   if (nearest.y !== cat.y) { cat.vy = 0; cat.air = false; }
   if (cat.state === 'climb') { cat.climb = null; setState('sit', 2); }
   cat.x = nearest.x; cat.y = nearest.y; cat.onWindow = false;
@@ -149,8 +150,8 @@ function windowRoute(w) {
   })), from.y, w.y, w.x + w.width / 2);
   return route && onWinRange(route.landX) ? route : null;
 }
-function approachClimb(route, then) {
-  if (!moveToward(route.baseX, 4)) return;
+function approachClimb(route, then, dt) {
+  if (!moveToward(route.baseX, 4, dt)) return;
   Object.assign(cat, { x: route.wall, y: route.startY, dir: route.dir, vx: 0, vy: 0, air: false, onWindow: false,
     climb: { ...route, then, left: Math.max(6, cat.dur - cat.stateTime) } });
   setState('climb', 120);
@@ -174,30 +175,72 @@ function climbStep(dt) {
 // Heads for a point, climbing between stacked screens only when the cat is daring. True once level with it.
 function travel(goal, stop, dt) {
   const from = surfaceAt(cat.x, cat.y), to = surfaceAt(goal.x, goal.y);
-  if (to === from || cat.onWindow || cat.air) return moveToward(goal.x, stop);
+  if (to === from || cat.onWindow || cat.air) return moveToward(goal.x, stop, dt);
   const hop = nextHop(from, to, goal.x, cat.daring);
-  if (hop && hop.wall !== undefined) approachClimb(hop, cat.state);
-  else if (hop) moveToward(hop.x, 4);
+  if (hop && hop.wall !== undefined) approachClimb(hop, cat.state, dt);
+  else if (hop) moveToward(hop.x, 4, dt);
   else {
     // Out of reach: waits as close as it can get, chattering at it, and may yet work up the courage to climb.
     cat.watch = true;
     if (!cat.daring && Math.random() < climbChance() * 0.1 * dt) cat.daring = true;
-    moveToward(standOn(from, goal.x), stop);
+    moveToward(standOn(from, goal.x), stop, dt);
   }
   return false;
 }
 
 function setState(s, dur) {
-  if (s !== cat.state) { cat.route = null; cat.pounce = null; cat.leap = null; cat.dribble = false; cat.daring = Math.random() < climbChance(); }
+  if (s !== cat.state) {
+    if (cat.heldYarn) releaseYarn();
+    cat.route = null; cat.pounce = null; cat.leap = null; cat.dribble = false; cat.crab = null; cat.heading = null; cat.turn = 0;
+    cat.daring = Math.random() < climbChance();
+  }
   cat.state = s; cat.stateTime = 0; cat.dur = dur ?? rand(2, 5); cat.bat = null; cat.paw = null;
 }
 function jump(vy, vx = 0, then = null) { cat.vy = vy; cat.vx = vx; cat.air = true; cat.onWindow = false; setState('jump', 3); cat.landThen = then; }
 function land(dur) {
-  if (cat.state !== 'jump') return;
+  if (cat.state === 'crab') { cat.vx = 0; cat.crab.landed = true; return; }
+  if (cat.state !== 'jump' && cat.state !== 'hopDown') { cat.landing = 0.14; return; }
   cat.vx = 0;
   const missed = cat.pounce && !cat.pounce.hit;
-  if (missed) return setState('lick', rand(1.5, 3)); // a quick wash: "I meant to do that"
-  setState(cat.landThen || 'sit', cat.landThen ? rand(3, 6) : dur);
+  const next = missed ? 'lick' : cat.landThen || 'sit';
+  const seconds = missed ? rand(1.5, 3) : cat.landThen ? rand(3, 6) : dur;
+  setState('land', 0.18);
+  cat.afterLand = { state: next, dur: seconds };
+}
+function startCrab(dir = cat.dir) {
+  if (interest() < 3 || reducedMotion.matches || cat.air || cat.onWindow) return false;
+  const lift = 8 * pixelCat.scale, distance = 18 * pixelCat.scale, vy = Math.sqrt(2 * G * lift);
+  for (const heading of [dir, -dir]) {
+    const x = cat.x + heading * distance, landing = pixelCat.box({ ...cat, x });
+    const path = {
+      left: Math.min(Math.round(cat.x), Math.round(x)) - pixelCat.padding,
+      right: Math.max(Math.round(cat.x), Math.round(x)) + pixelCat.padding,
+      top: Math.round(cat.y) - pixelCat.height - lift, bottom: Math.round(cat.y),
+    };
+    if (catFloorAt(x) !== cat.y || !covered(landing, env.floors.map(workArea)) || !covered(path, env.floors.map(screenArea))) continue;
+    setState('crab', 1.25);
+    cat.crab = { dir: heading, vx: heading * distance * G / (2 * vy), vy: -vy, launched: false, landed: false };
+    cat.vx = 0; cat.actionCool = rand(15, 30);
+    return true;
+  }
+  return false;
+}
+function startFlop(yarn = null) {
+  if (cat.air || cat.onWindow || !covered(pixelCat.box(cat), env.floors.map(workArea))) return false;
+  if (yarn && (interest() < 2 || yarn !== toyOf('yarn') || yarn.vy !== 0 || Math.abs(yarn.vx) >= 60 ||
+    surfaceAt(yarn.x, yarn.y) !== surfaceAt(cat.x, cat.y) ||
+    Math.abs(yarn.x - cat.x) > 24 * pixelCat.scale + YARN_RADIUS || Math.abs(yarn.y - cat.y) > 4)) return false;
+  setState(yarn ? 'bunny' : 'flop', yarn ? rand(2, 3) : rand(3.2, 4.5));
+  cat.vx = 0; cat.heldYarn = yarn; cat.grab = yarn && { x: yarn.x, y: yarn.y };
+  cat.actionCool = rand(15, 30);
+  return true;
+}
+function releaseYarn(toss = false) {
+  const yarn = cat.heldYarn;
+  if (!yarn) return;
+  yarn.vx = toss ? cat.dir * 90 * pixelCat.scale / 3 : 0;
+  yarn.vy = toss ? -100 * Math.sqrt(pixelCat.scale / 3) : 0;
+  yarn.idle = 0; cat.heldYarn = null; cat.grab = null;
 }
 // A low, flat leap at a ball. It doesn't always land where it was aimed.
 function pounce(y) {
@@ -216,6 +259,7 @@ function placeCat(point) {
   Object.assign(cat, {
     x: point ? point.x : (home.x0 + home.x1) / 2, y: point ? point.y : home.y,
     vx: 0, vy: 0, air: false, onWindow: false, ignoreWin: false, swat: 0, climb: null, pounce: null, leap: null,
+    turn: 0, brake: 0, landing: 0, afterLand: null,
   });
   setState('sit', 5);
 }
@@ -317,6 +361,7 @@ function decide() {
   if (isNight() && lvl < 4) return nap(rand(30, 60));
   if (!awake && lvl < 4) {
     const r = Math.random();
+    if (r < 0.12 && cat.actionCool <= 0 && startFlop()) return;
     return r < 0.3 ? setState('lick', rand(15, 40)) : r < 0.5 ? setState('loaf', rand(15, 40)) : nap(rand(15, 40));
   }
   if (cat.state === 'sleep') return setState('stretch', 2); // waking up: a long stretch and a yawn
@@ -325,6 +370,7 @@ function decide() {
     setState('zoom', rand(3, 6)); cat.dir = Math.random() < 0.5 ? -1 : 1;
     return;
   }
+  if (lvl >= 3 && cat.actionCool <= 0 && Math.random() < 0.06 && startCrab()) return;
   // The user is typing: go and have a look at what they're working on.
   if (env.typing && lvl >= 2 && Math.random() < reactChance()) {
     if (winTop() && !cat.onWindow && Math.random() < 0.7) return setState('toWindow', 8);
@@ -351,6 +397,7 @@ function decide() {
       return;
     }
   }
+  if (cat.actionCool <= 0 && Math.random() < 0.12 && startFlop()) return;
   const r = Math.random();
   if (r < 0.25) setState('lick', rand(3, 6));
   else if (r < 0.47) { setState('walk', rand(2, 5)); cat.dir = Math.random() < 0.5 ? -1 : 1; }
@@ -365,33 +412,95 @@ function spawnCup() {
   toys.push({ kind: 'cup', x: w.x + w.width - 40, y: w.y, vx: 0, vy: 0, falling: false });
 }
 
-function moveToward(tx, stop) {
-  const dx = tx - cat.x;
-  cat.dir = dx >= 0 ? 1 : -1;
-  cat.vx = Math.abs(dx) > stop ? cat.dir * speed() : 0;
-  return Math.abs(dx) <= stop;
+const acceleration = () => 1800 * pixelCat.scale / 3;
+const deceleration = () => 3000 * pixelCat.scale / 3;
+function clearGroundPath(x, stayOnWindow = false) {
+  const steps = Math.max(1, Math.ceil(Math.abs(x - cat.x) / (4 * pixelCat.scale))), areas = env.floors.map(workArea);
+  for (let i = 1; i <= steps; i++) {
+    const next = cat.x + (x - cat.x) * i / steps;
+    const y = cat.onWindow ? cat.y : Math.min(cat.y, catFloorAt(next));
+    if ((stayOnWindow && cat.onWindow && !onWinRange(next)) || !covered(pixelCat.box({ ...cat, x: next, y }), areas)) return false;
+  }
+  return true;
+}
+function steer(target, dt) {
+  if (cat.air) { cat.vx = target; return; }
+  const reversing = target * cat.vx < 0;
+  if (reversing || cat.landing > 0) target = 0;
+  if (target && cat.dir !== Math.sign(target)) {
+    cat.dir = Math.sign(target); cat.turn = reducedMotion.matches ? 0 : 0.1;
+  }
+  if (cat.turn > 0) target = 0;
+  const slowing = Math.abs(target) < Math.abs(cat.vx);
+  if (slowing) cat.brake = 0.16;
+  const delta = (slowing ? deceleration() : acceleration()) * dt;
+  cat.vx += Math.max(-delta, Math.min(delta, target - cat.vx));
+}
+function stroll(dt, pace) {
+  if (cat.heading === null || cat.stateTime <= dt) cat.heading = cat.dir;
+  const room = cat.vx * cat.vx / (2 * deceleration()) + Math.abs(cat.vx) * dt + 4 * pixelCat.scale;
+  if (!cat.air && !clearGroundPath(cat.x + cat.heading * room, true)) cat.heading *= -1;
+  steer(cat.heading * speed() * pace, dt);
+}
+function moveToward(tx, stop, dt, pace = 1) {
+  const dx = tx - cat.x, remaining = Math.max(0, Math.abs(dx) - stop);
+  if (remaining < 0.01) { cat.vx = 0; return true; }
+  const dir = dx >= 0 ? 1 : -1;
+  const target = Math.min(speed() * pace, Math.sqrt(2 * deceleration() * remaining));
+  const room = Math.min(remaining, cat.vx * cat.vx / (2 * deceleration()) + Math.abs(cat.vx) * dt + 4 * pixelCat.scale);
+  steer(cat.air || clearGroundPath(cat.x + dir * room) ? dir * target : 0, dt);
+  if (dt > 0 && cat.vx * dir > 0) cat.vx = dir * Math.min(Math.abs(cat.vx), remaining / dt);
+  return false;
 }
 
 function update(dt) {
   cat.stateTime += dt; cat.t += dt;
+  for (const key of ['turn', 'brake', 'landing', 'actionCool']) cat[key] = Math.max(0, cat[key] - dt);
   const c = env.cursor, w = winTop(), u = pixelCat.scale / 3;
   cat.watch = false;
   maybeBatCursor(dt);
 
   switch (cat.state) {
     case 'walk':
-      if (cat.onWindow) { if (!onWinRange(cat.x + cat.dir * 20)) cat.dir *= -1; }
-      else if ((cat.dir < 0 && cat.x <= pixelCat.padding) || (cat.dir > 0 && cat.x >= env.width - pixelCat.padding)) cat.dir *= -1;
-      cat.vx = cat.dir * speed() * 0.6;
+      stroll(dt, 0.6);
       break;
     case 'zoom': // a mad dash with sudden about-turns and hops
-      if (cat.onWindow) { if (!onWinRange(cat.x + cat.dir * 20)) cat.dir *= -1; }
-      else if ((cat.dir < 0 && cat.x <= pixelCat.padding) || (cat.dir > 0 && cat.x >= env.width - pixelCat.padding)) cat.dir *= -1;
-      if (!cat.air && Math.random() < 0.7 * dt) cat.dir *= -1;
-      if (!cat.air && Math.random() < 0.6 * dt) { cat.vy = -rand(300, 450) * Math.sqrt(u); cat.air = true; }
-      cat.vx = cat.dir * speed() * 2.2;
+      if (!cat.air && Math.random() < 0.7 * dt) cat.heading = -(cat.heading || cat.dir);
+      stroll(dt, reducedMotion.matches ? 0.6 : 2.2);
+      if (!cat.air && cat.landing <= 0 && !reducedMotion.matches && Math.random() < 0.6 * dt) {
+        cat.vy = -rand(300, 450) * Math.sqrt(u); cat.air = true;
+      }
       break;
-    case 'investigate': moveToward(c.x, 160); break;
+    case 'brake':
+      steer(0, dt);
+      if (Math.abs(cat.vx) < 1) { cat.vx = 0; decide(); }
+      break;
+    case 'land':
+      cat.vx = 0;
+      if (cat.stateTime >= cat.dur) {
+        const next = cat.afterLand || { state: 'sit', dur: 3 };
+        cat.afterLand = null; setState(next.state, next.dur);
+      }
+      break;
+    case 'crab': {
+      const hop = cat.crab;
+      if (!hop || (reducedMotion.matches && !cat.air)) { setState('sit', 3); cat.vx = 0; break; }
+      if (!hop.launched && cat.stateTime >= 0.25) {
+        cat.vx = hop.vx; cat.vy = hop.vy; cat.air = true; hop.launched = true;
+      }
+      if (hop.landed || !hop.launched || reducedMotion.matches) cat.vx = 0;
+      break;
+    }
+    case 'flop':
+    case 'bunny':
+      cat.vx = 0;
+      if (cat.state === 'bunny' && (!cat.heldYarn || !toys.includes(cat.heldYarn))) { setState('sit', 3); break; }
+      if (cat.stateTime >= cat.dur) {
+        if (cat.state === 'bunny') { releaseYarn(!reducedMotion.matches); setState('lick', rand(2, 4)); }
+        else { setState('land', 0.2); cat.afterLand = { state: 'sit', dur: rand(3, 6) }; }
+      }
+      break;
+    case 'investigate': moveToward(c.x, 160, dt); break;
     case 'chase': {
       const t = chaseTarget();
       if (t && t.why === 'yarn') {
@@ -401,10 +510,11 @@ function update(dt) {
         // A ball that has stopped rolling is prey: creep up on it before pouncing.
         if (settled && !cat.dribble && Math.abs(y.vx) < 20 && gap > 90 * u && gap < 320 * u) { setState('stalk', 8); break; }
         // A ball close by gets patted. One just patted along is followed, staying behind it, and patted again.
-        const spot = sameSurface && (cat.dribble ? gap < 400 * u : settled && Math.abs(y.vx) < 60 && gap < 90 * u) ? batSpot(y) : null;
+        const spot = sameSurface && (cat.dribble ? gap < 400 * u : settled && Math.abs(y.vx) < 60 && gap < 90 * u + YARN_RADIUS) ? batSpot(y) : null;
         if (spot !== null) {
-          if (moveToward(spot, Math.max(3, speed() * dt)) && settled && Math.abs(y.vx) < 60) {
+          if (moveToward(spot, Math.max(3, speed() * dt), dt) && settled && Math.abs(y.vx) < 60) {
             cat.dir = y.x >= cat.x ? 1 : -1;
+            if (!cat.dribble && cat.actionCool <= 0 && Math.random() < [0, 0, 0.1, 0.2, 0.3][interest()] && startFlop(y)) break;
             startBat('yarn', 1 + Math.floor(rand(0, 2.2)));
           }
           break;
@@ -415,15 +525,14 @@ function update(dt) {
         else if (dy > 0 && dy < 300 && !cat.air && !cat.onWindow && Math.random() < 0.04) { cat.vx = 0; jump(-Math.sqrt(2 * G * (dy + 20)), 0, 'chase'); }
         break;
       }
-      const near = moveToward(t ? t.x : c.x, t ? 30 : 40);
+      const near = moveToward(t ? t.x : c.x, t ? 30 : 40, dt);
       if (near && ((t && t.why === 'laser') || (!t && cursorSpeed > 12))) jump(-420, cat.dir * speed() * 0.8);
       break;
     }
     case 'stalk': { // belly to the ground, creeping closer
       const y = toyOf('yarn');
       if (!y || y.vy !== 0 || Math.abs(y.vx) >= 20 || surfaceAt(y.x, y.y) !== surfaceAt(cat.x, cat.y)) { setState('chase', rand(3, 6)); break; }
-      if (moveToward(y.x, 80 * u)) setState('ready', rand(0.5, 1.2));
-      else cat.vx *= 0.3;
+      if (moveToward(y.x, 80 * u, dt, 0.3)) setState('ready', rand(0.5, 1.2));
       break;
     }
     case 'ready': // the wiggle, then the leap
@@ -438,10 +547,10 @@ function update(dt) {
       if (!w) { setState('sit', 2); break; }
       if (cat.onWindow) { setState('sit', 3); break; }
       if (cat.route) {
-        if (sameWindow(cat.route.window, w)) approachClimb(cat.route, 'sit'); else setState('sit', 2);
+        if (sameWindow(cat.route.window, w)) approachClimb(cat.route, 'sit', dt); else setState('sit', 2);
         break;
       }
-      if (!onWinRange(cat.x)) moveToward(Math.max(w.x + 40, Math.min(w.x + w.width - 40, cat.x)), 5);
+      if (!onWinRange(cat.x)) moveToward(Math.max(w.x + 40, Math.min(w.x + w.width - 40, cat.x)), 5, dt);
       else {
         const h = catFloorAt() - w.y;
         cat.vx = 0;
@@ -450,15 +559,14 @@ function update(dt) {
         else if (!(h > 0 && cat.daring && (cat.route = windowRoute(w)))) setState('sit', 2);
       }
       break;
-    case 'hopDown': cat.onWindow = false; cat.ignoreWin = true; cat.vx = cat.dir * 60; break;
+    case 'hopDown': cat.onWindow = false; cat.ignoreWin = true; cat.air = true; cat.vx = cat.dir * 60; break;
     case 'helpType': // paces across the window the user is typing in
-      if (!onWinRange(cat.x + cat.dir * 20)) cat.dir *= -1;
-      cat.vx = cat.dir * speed() * 0.5;
+      stroll(dt, 0.5);
       break;
     case 'toBowl': {
       const b = toyOf('food');
       if (!b) { setState('sit', 2); break; }
-      if (moveToward(b.x, 20)) { setState('eat', 4); }
+      if (moveToward(b.x, 20, dt)) { setState('eat', 4); }
       break;
     }
     case 'eat': {
@@ -469,7 +577,7 @@ function update(dt) {
     case 'toCup': {
       const cup = toyOf('cup');
       if (!cup || !cat.onWindow) { setState('sit', 2); break; }
-      if (moveToward(cup.x - 30, 10) && !cup.falling) {
+      if (moveToward(cup.x - 30, 10, dt) && !cup.falling) {
         cat.swat = 0.5; cup.falling = true; cup.vx = 120;
         setState('smug', 3);
       }
@@ -507,7 +615,10 @@ function update(dt) {
 
   cat.swat = Math.max(0, cat.swat - dt);
   updateToys(dt);
-  if (cat.stateTime > cat.dur && !['jump', 'climb', 'ready', 'settle'].includes(cat.state)) { cat.vx = 0; decide(); }
+  if (cat.stateTime > cat.dur && !['jump', 'climb', 'ready', 'settle'].includes(cat.state)) {
+    if ((cat.state === 'walk' || cat.state === 'zoom') && !cat.air && Math.abs(cat.vx) > 1) setState('brake', 0.35);
+    else { cat.vx = 0; decide(); }
+  }
 }
 
 // Eyes on whatever has the cat's attention, and a slow blink for a cursor resting quietly nearby.
@@ -532,26 +643,37 @@ function lookAround(dt) {
 
 // Gravity, landing on floors, and riding on top of the active window.
 function physics(dt, w) {
-  const prevY = cat.y;
+  const prevY = cat.y, wasAir = cat.air;
   cat.vy += G * dt;
   cat.y += cat.vy * dt;
   cat.x = Math.max(pixelCat.padding, Math.min(env.width - pixelCat.padding, cat.x + cat.vx * dt));
   const fl = catFloorAt(cat.x, prevY);
   if (w && !cat.ignoreWin && cat.vy >= 0 && onWinRange(cat.x) && prevY <= w.y + 6 && cat.y >= w.y) {
     cat.y = w.y; cat.vy = 0; cat.onWindow = true; cat.air = false;
-    land(3);
+    if (wasAir) land(3);
   } else if (cat.onWindow) {
     // Ride along with the window; fall if it moved away or the cat walked off its edge.
-    if (w && onWinRange(cat.x)) { cat.y = w.y; cat.vy = 0; } else { cat.onWindow = false; }
+    if (w && onWinRange(cat.x)) { cat.y = w.y; cat.vy = 0; } else { cat.onWindow = false; cat.air = true; }
   }
   if (!cat.onWindow && cat.y >= fl) {
     cat.y = fl; cat.vy = 0; cat.air = false; cat.ignoreWin = false;
-    land(2);
-  }
+    if (wasAir) land(2);
+  } else if (!cat.onWindow && cat.vy > 0) cat.air = true;
 }
 
 function updateToys(dt) {
   for (const t of toys) {
+    if (t === cat.heldYarn) {
+      const pull = reducedMotion.matches ? 1 : Math.min(1, cat.stateTime / 0.25);
+      const x = cat.x + cat.dir * 10 * pixelCat.scale, y = cat.y - 12 * pixelCat.scale + YARN_RADIUS;
+      t.x = cat.grab.x + (x - cat.grab.x) * pull;
+      t.y = cat.grab.y + (y - cat.grab.y) * pull;
+      if (!covered({ left: t.x - YARN_RADIUS, right: t.x + YARN_RADIUS, top: t.y - 2 * YARN_RADIUS, bottom: t.y }, env.floors.map(workArea))) {
+        t.x = x; t.y = y;
+      }
+      t.vx = 0; t.vy = 0; t.idle = 0;
+      continue;
+    }
     if (t.kind === 'yarn' || t.kind === 'cup') {
       if (t.kind === 'cup' && !t.falling) continue;
       const prevY = t.y;
@@ -569,7 +691,7 @@ function updateToys(dt) {
   toys = toys.filter((t) => !t.dead);
   // A yarn ball that has stopped is boring after a while.
   const y = toyOf('yarn');
-  if (y && Math.abs(y.vx) < 5 && y.vy === 0) { y.idle = (y.idle || 0) + dt; if (y.idle > 25) toys = toys.filter((t) => t !== y); } else if (y) y.idle = 0;
+  if (y && y !== cat.heldYarn && Math.abs(y.vx) < 5 && y.vy === 0) { y.idle = (y.idle || 0) + dt; if (y.idle > 25) toys = toys.filter((t) => t !== y); } else if (y) y.idle = 0;
 }
 
 const splats = [];
@@ -577,8 +699,9 @@ const splats = [];
 // ---- drawing ----
 function ell(x, y, rx, ry, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, 7); ctx.fill(); }
 
-function drawToys() {
+function drawToys(held = false) {
   for (const t of toys) {
+    if ((t === cat.heldYarn) !== held) continue;
     if (t.kind === 'yarn') {
       ell(t.x, t.y - 12, 12, 12, '#d33'); ctx.strokeStyle = '#a11'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(t.x, t.y - 12, 8, 0.5, 4); ctx.stroke();
@@ -607,6 +730,7 @@ function draw(dt) {
     ctx.globalAlpha = 1;
   }
   pixelCat.draw(ctx, cat);
+  drawToys(true);
 }
 
 // ---- right-click menu ----

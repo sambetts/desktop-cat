@@ -221,16 +221,22 @@ const pixelCat = (() => {
     const climbing = cat.state === 'climb';
     const moving = Math.abs(cat.vx) > 1 || (climbing && Math.abs(cat.vy) > 1), sleeping = cat.state === 'sleep';
     const stretch = cat.state === 'stretch', eating = cat.state === 'eat', licking = cat.state === 'lick';
-    const crouching = cat.state === 'stalk' || cat.state === 'ready', wiggling = cat.state === 'ready';
+    const recovering = cat.state === 'land' || (!cat.air && cat.landing > 0);
+    const crouching = cat.state === 'stalk' || cat.state === 'ready' || recovering, wiggling = cat.state === 'ready';
+    const crabbing = cat.state === 'crab', reclining = cat.state === 'flop' || cat.state === 'bunny', kicking = cat.state === 'bunny';
     const loafing = cat.state === 'loaf', since = cat.stateTime || 0;
     const airborne = !climbing && (cat.air || cat.vy < -1);
-    const seated = !moving && !climbing && !sleeping && !stretch && !eating && !airborne && !crouching && !loafing;
+    const seated = !moving && !climbing && !sleeping && !stretch && !eating && !airborne && !crouching && !loafing && !crabbing && !reclining;
     const t = reducedMotion.matches ? 0 : cat.t;
-    const frame = Math.floor(t * (cat.state === 'zoom' ? 14 : crouching ? 4 : 8)) % 4;
-    const stride = moving ? [-2, 0, 2, 0][frame] : 0;
-    const bob = moving && !crouching ? [0, -1, 0, -1][frame] : sleeping ? [0, 0, -1, 0][Math.floor(t * 2) % 4] : 0;
+    const pace = Math.abs(cat.vx) * 3 / scale;
+    const galloping = moving && !climbing && !airborne && !crouching && pace > 280;
+    const trotting = moving && !climbing && !airborne && !crouching && !galloping && pace > 100;
+    const braking = !reducedMotion.matches && !airborne && cat.brake > 0;
+    const frame = Math.floor(t * (galloping ? 16 : trotting ? 12 : crouching ? 4 : 8)) % 4;
+    const stride = moving ? (galloping ? [-3, -1, 3, 1] : [-2, 0, 2, 0])[frame] : 0;
+    const bob = moving && !crouching ? (trotting ? [-1, -2, -1, 0] : [0, -1, 0, -1])[frame] : sleeping ? [0, 0, -1, 0][Math.floor(t * 2) % 4] : 0;
     // Tail language: twitching while hunting or watching prey, a slow swish when smug, otherwise mostly still.
-    const hunting = crouching || cat.watch;
+    const hunting = (crouching && !recovering) || cat.watch;
     const wag = hunting ? [0, 1, 0, -1][Math.floor(t * 10) % 4]
       : cat.state === 'smug' ? [0, 1, 0, -1][Math.floor(t * 6) % 4]
         : seated && t % 7 < 1 ? [0, 1, 0, -1][Math.floor(t * 4) % 4] : 0;
@@ -267,13 +273,35 @@ const pixelCat = (() => {
 
     // Each pose places the head (hx, hy) and, if a paw is swatting, where the swat reaches from.
     let hx, hy, swatAt = [5, -13];
-    if (sleeping || loafing) {
+    if (reclining) {
+      const phase = reducedMotion.matches ? 1 : since;
+      const belly = kicking || (phase >= 0.45 && phase < (cat.dur || 4) - 0.5);
+      const rock = belly && !reducedMotion.matches ? [0, -1, 0, 1][Math.floor(t * 3) % 4] : 0;
+      const kick = kicking ? [-2, 2, -2, 2][Math.floor(t * 10) % 4] : 0;
+      part('tailLow', 11, -9);
+      limb(11, -10, belly ? 20 + kick : 18, belly ? -23 + kick : -6);
+      if (belly) {
+        ctx.save(); ctx.translate(-8, -3 + rock); ctx.scale(1, -1); part('body', 0, 0); ctx.restore();
+      } else part('body', -8, -17);
+      limb(13, -10, belly ? 17 - kick : 19, belly ? -24 - kick : -5);
+      limb(-3, -11, belly ? 5 : -1, belly ? -23 : -15);
+      limb(0, -10, belly ? 10 : 4, belly ? -21 : -14);
+      [hx, hy] = [-26, -26 + Math.min(rock, 0)];
+    } else if (crabbing) {
+      part('legLongFar', -11, -10);
+      part('legLongFar', 4, -10);
+      part('tailUp', -18, -36); part('tailUp', -16, -36);
+      part('body', -14, -23);
+      part('legLong', -14, -10);
+      part('legLong', 7, -10);
+      [hx, hy] = [-1, -36];
+    } else if (sleeping || loafing) {
       part('sleep', -20, -14 + bob);
       part('curl', -23, -10);
       [hx, hy] = sleeping ? [-1, -24] : [-4, -27];
     } else if (crouching) {
       // Low to the ground; just before a pounce the raised rear end wiggles.
-      const wx = wiggling ? [0, 1, 0, -1][Math.floor(t * 12) % 4] : 0, creep = stride / 2;
+      const wx = wiggling ? [0, 1, 0, -1][Math.floor(t * 12) % 4] : 0, creep = recovering ? 0 : stride / 2;
       part('tailLow', -27 + wx, (wiggling ? -17 : -15) + (wag < 0 ? -1 : 0));
       part('paw', -12 + wx - creep, -5);
       part('paw', 5 + creep, -5);
@@ -310,15 +338,15 @@ const pixelCat = (() => {
       [hx, hy] = [-1, -23];
     } else {
       // Standing, walking, leaping (legs tucked and splayed), eating with the head down, or climbing.
-      const tuck = airborne ? 2 : 0;
-      part('legFar', -8 - stride - tuck, -7 - tuck);
-      part('legFar', 7 + stride + tuck, -7 - tuck);
-      if (climbing) part('tailLow', -26, -15);
+      const tuck = airborne ? 2 : 0, feet = -7 - tuck + Math.min(bob, 0);
+      part('legFar', -8 + (galloping ? stride : -stride) - tuck, feet);
+      part('legFar', 7 + stride + tuck, feet);
+      if (climbing || galloping || braking) part('tailLow', -26, -15 + bob);
       else part('tailUp', -17, -32 + bob);
       part('body', -14, -20 + bob);
-      part('leg', -11 + stride - tuck, -7 - tuck - (moving && frame === 1 ? 1 : 0));
-      if (!swatting) part('leg', 4 - stride + tuck, -7 - tuck - (moving && frame === 3 ? 1 : 0));
-      [hx, hy] = [-1, eating ? -27 + frame % 2 : -36 + bob];
+      part('leg', -11 + stride - tuck, feet - (moving && frame === 1 ? 1 : 0));
+      if (!swatting) part('leg', 4 + (galloping ? stride : -stride) + tuck + (braking ? 2 : 0), feet - (moving && frame === 3 ? 1 : 0));
+      [hx, hy] = [-1, eating ? -27 + frame % 2 : (galloping || braking ? -33 : -36) + bob];
     }
 
     if (climbing) { // the head stays upright, peering out from the top of the climb
@@ -328,14 +356,18 @@ const pixelCat = (() => {
       ctx.scale(cat.dir * scale, scale);
       hx = -29; hy = -51;
     }
+    if (reclining) {
+      ctx.save();
+      ctx.translate(hx + 13, hy + 10); ctx.rotate(-Math.PI / 2); ctx.translate(-hx - 13, -hy - 10);
+    }
     part('head', hx, hy);
     // A slow blink (half closed, closed, half closed) is how cats say they trust you.
     const blink = reducedMotion.matches ? 0 : cat.blink || 0;
     const closed = sleeping || stretch || eating || licking || t % 5 > 4.7 || (blink > 0.35 && blink < 1.05);
-    const lidded = blink > 0 || loafing || kneading || cat.state === 'smug';
+    const lidded = blink > 0 || loafing || kneading || (reclining && !kicking) || recovering || cat.state === 'smug';
     // Eyes follow whatever has the cat's attention; pupils go wide for the hunt.
     const look = cat.look, ahead = !look || look.x * cat.dir >= 0, up = !!look && look.y < -50 * scale;
-    const wide = hunting || batting || (cat.state === 'chase' && airborne);
+    const wide = hunting || batting || crabbing || kicking || (cat.state === 'chase' && airborne);
     for (const ex of [hx + 5, hx + 17]) {
       const ey = hy + 8;
       if (closed) { // a contented upside-down smile
@@ -376,6 +408,7 @@ const pixelCat = (() => {
       part('groom', px, py);
     }
     if (swatting) part('swat', swatAt[0] + reach, swatAt[1]);
+    if (reclining) ctx.restore();
     ctx.restore();
 
     if (sleeping) {
